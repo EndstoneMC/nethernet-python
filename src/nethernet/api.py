@@ -64,7 +64,6 @@ class Connection:
         self._owns_endpoint = owns_endpoint
         self._recv_queue: asyncio.Queue[bytes | _Closed] = asyncio.Queue()
         self._connected: asyncio.Future[None] = asyncio.get_event_loop().create_future()
-        self._connected.add_done_callback(self._consume_connected)
         self._closed = asyncio.Event()
         self._closed_error: ESessionError | None = None
 
@@ -150,21 +149,14 @@ class Connection:
         self._recv_queue.put_nowait(data)
 
     async def _await_connected(self, timeout: float | None) -> None:
-        if timeout is None:
-            await self._connected
-            return
+        # timeout=None blocks until the session opens (or raises ConnectionFailed if it closes
+        # first); a timeout cancels the wait and reports the negotiation timeout.
         try:
-            await asyncio.wait_for(asyncio.shield(self._connected), timeout)
+            await asyncio.wait_for(self._connected, timeout)
         except TimeoutError:
             raise ConnectionFailed(
                 ESessionError.NEGOTIATION_TIMEOUT_WAITING_FOR_RESPONSE
             ) from None
-
-    @staticmethod
-    def _consume_connected(fut: asyncio.Future[None]) -> None:
-        # Retrieve any exception so a connect-timeout abandonment never logs "never retrieved".
-        if not fut.cancelled():
-            fut.exception()
 
 
 class _Endpoint:
@@ -193,8 +185,8 @@ class _Endpoint:
         await self._transport.start()
 
     async def aclose(self) -> None:
-        for conn in list(self._conns.values()):
-            conn._mark_closed(conn._closed_error or ESessionError.NONE)
+        # Closing the transport closes every live session, which marks each Connection closed
+        # through the on_session_close callback below — no separate sweep needed here.
         await self._transport.aclose()
 
     @property

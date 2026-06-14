@@ -127,6 +127,13 @@ async def test_connect_failure_raises_connection_failed():
     )
 
 
+async def test_connect_explicit_timeout_raises_connection_failed():
+    # The connect()-level `timeout` bounds the wait independently of negotiation_timeout.
+    with pytest.raises(ConnectionFailed) as exc:
+        await connect(NetworkID.p2p(998), bind_host=LOOPBACK, port=0, timeout=0.5)
+    assert exc.value.error is ESessionError.NEGOTIATION_TIMEOUT_WAITING_FOR_RESPONSE
+
+
 async def test_recv_after_clean_close_raises_connection_closed():
     server_id = NetworkID.p2p(222)
 
