@@ -5,9 +5,10 @@ Verification command base: `uv run pytest -q`. Tackle phases top-to-bottom; task
 Phase 1 (3–6) may be parallelized.
 
 ## Phase 0 — Scaffold & de-risk
-- [ ] **1. Project scaffold** — `pyproject.toml` (uv), `src/nethernet/` skeleton, deps
-  `aiortc`+`cryptography`+`pytest`/`pytest-asyncio`, smoke test.
-  - [ ] `uv sync` ok · `import aiortc` ok · `uv run pytest` green
+- [x] **1. Project scaffold** — `pyproject.toml` (uv), `src/nethernet/` skeleton, deps
+  `aiortc`+`cryptography`+`pytest`/`pytest-asyncio`, smoke test. *(aiortc 1.14.0,
+  cryptography 49.0.0, pytest 9.1.0, pytest-asyncio 1.4.0)*
+  - [x] `uv sync` ok · `import aiortc` ok · `uv run pytest` green (3 passed)
 - [ ] **2. aiortc spike (SPIKE)** — 2 in-process PCs, exact channel params, send a
   **262144-byte** reliable message; record max-message-size behavior, candidate format
   (`candidate:` prefix), non-trickle confirmation → `tasks/spike-aiortc.md`.

@@ -1,0 +1,32 @@
+[project]
+name = "nethernet"
+version = "0.0.1"
+description = "Cleanroom Python implementation of Minecraft Bedrock's NetherNet P2P/LAN transport, built on aiortc."
+readme = "README.md"
+requires-python = ">=3.11"
+license = { text = "MIT" }
+keywords = ["nethernet", "minecraft", "bedrock", "webrtc", "p2p", "lan", "aiortc"]
+dependencies = [
+    # WebRTC engine (ICE + DTLS + SCTP data channels). See SPEC.md s6.
+    "aiortc>=1.9",
+    # AES-256-ECB + PKCS7 for the LAN discovery envelope. See SPEC.md s8.
+    "cryptography>=42",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8",
+    "pytest-asyncio>=0.24",
+]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/nethernet"]
+
+[tool.pytest.ini_options]
+# aiortc is asyncio-based; auto mode lets async test functions run without per-test markers.
+asyncio_mode = "auto"
+testpaths = ["tests"]
