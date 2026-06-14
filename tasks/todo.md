@@ -9,10 +9,12 @@ Phase 1 (3–6) may be parallelized.
   `aiortc`+`cryptography`+`pytest`/`pytest-asyncio`, smoke test. *(aiortc 1.14.0,
   cryptography 49.0.0, pytest 9.1.0, pytest-asyncio 1.4.0)*
   - [x] `uv sync` ok · `import aiortc` ok · `uv run pytest` green (3 passed)
-- [ ] **2. aiortc spike (SPIKE)** — 2 in-process PCs, exact channel params, send a
+- [x] **2. aiortc spike (SPIKE)** — 2 in-process PCs, exact channel params, send a
   **262144-byte** reliable message; record max-message-size behavior, candidate format
   (`candidate:` prefix), non-trickle confirmation → `tasks/spike-aiortc.md`.
-  - [ ] Findings written · large message sends or workaround identified
+  - [x] Findings written · **large message sends OK** after munging SDP to
+    `max-message-size:262144` (aiortc default 65536); non-trickle confirmed; candidate helpers
+    need `candidate:` prefix stripped on parse / prepended on emit
 
 ### ▣ Checkpoint A — env builds, biggest WebRTC unknown resolved → review
 
