@@ -15,6 +15,7 @@ import asyncio
 from collections.abc import Callable
 from enum import Enum, auto
 
+from nethernet.constants import DEFAULT_NEGOTIATION_TIMEOUT
 from nethernet.errors import ESendType, ESessionError
 from nethernet.network_id import NetworkID
 from nethernet.signaling.messages import (
@@ -25,8 +26,6 @@ from nethernet.signaling.messages import (
     SignalingMessage,
 )
 from nethernet.transport.peer_connection import PeerConnection
-
-DEFAULT_NEGOTIATION_TIMEOUT = 10.0  # seconds (SPEC.md s9.4)
 
 
 class SessionState(Enum):

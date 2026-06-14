@@ -64,12 +64,11 @@ Phase 1 (3–6) may be parallelized.
 ### ▣ Checkpoint D — end-to-end in-process session (mock signaling), all packet kinds (88 tests) ✓ → pushed
 
 ## Phase 4 — LAN binding & public API
-- [ ] **12. LanTransport** (§7–§8) — asyncio UDP, v4 broadcast + v6 link-local, seal/open
-  every datagram, dispatch by type, ignore own SenderId, peer cache, periodic Request;
-  implements signaling channel via Message packets. *(L — split 12a discovery, 12b
-  signaling+broadcast.)*
-  - [ ] two instances over loopback do Request/Response + Message · self ignored · bad-MAC
-    dropped
+- [x] **12. LanTransport** (§7–§8) — asyncio UDP (v4 broadcast; v6 link-local deferred),
+  seal/open every datagram, dispatch by type, ignore own SenderId, peer cache, periodic
+  Request; implements signaling channel via Message packets; tolerates the §12 empty probe.
+  - [x] real-UDP loopback Message exchange + logic tests: Request/Response, self ignored,
+    bad-MAC dropped, unicast vs broadcast (12 tests). Added `constants.py` (§10 defaults).
 - [ ] **13. Public Transport API + examples** — config (appId/port/interval/timeout/
   iceServers/flags); advertise+answer; `discover()`; `connect()`; accept incoming; `send`/
   `recv` by ESendType; `close()`; `examples/host.py`, `examples/join.py`.
