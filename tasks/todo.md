@@ -36,10 +36,10 @@ Phase 1 (3–6) may be parallelized.
 ### ▣ Checkpoint B — codecs green (56 tests, ruff clean); seal matches OpenSSL vector ✓ → pushed
 
 ## Phase 2 — WebRTC data path
-- [ ] **7. Fragmentation / PacketQueue** (§6.3–6.4) — countdown headers; `>0x3FBFF01` reject;
+- [x] **7. Fragmentation / PacketQueue** (§6.3–6.4) — countdown headers; `>0x3FBFF01` reject;
   unreliable-multi drop; reassembly on `header==0`; FIFO peek/read; zero-length ignored.
-  - [ ] fixtures `1` / `FRAGMENT_SIZE` / `FRAGMENT_SIZE+1` / large reassemble · headers
-    count to 0
+  - [x] fixtures `1` / `FRAGMENT_SIZE` / `FRAGMENT_SIZE+1` / 3-fragment reassemble · headers
+    count to 0 (12 tests)
 - [ ] **8. aiortc PeerConnection wrapper** (§6.1–6.2, §4) — 2 channels exact params; SDP
   max-message-size munge; candidate↔CANDIDATEADD (prefix-exact); iceServers/RelayOnly;
   `on("datachannel")` by label. *(L — split 8a channels/SDP, 8b candidate xlate+config if
