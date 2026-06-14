@@ -25,9 +25,9 @@ Phase 1 (3–6) may be parallelized.
 - [x] **4. Signaling message codec** (§5) — 4 messages; first-two-spaces tokenizer; reject
   unknown id / non-u64 connId / <3 tokens; `errors.py` enums.
   - [x] SDP-with-newlines round-trips · malformed rejected · exact serialization (17 tests)
-- [ ] **5. Discovery packet codec** (§7.2–7.3) — packed 20/24/32-byte headers, LE via
+- [x] **5. Discovery packet codec** (§7.2–7.3) — packed 20/24/32-byte headers, LE via
   `struct`, payload caps 1148/1140, computed `PacketLength`.
-  - [ ] byte fixtures match offsets · build↔parse round-trip
+  - [x] byte fixtures match offsets · build↔parse round-trip (13 tests)
 - [ ] **6. LAN crypto envelope** (§8) — key=SHA256(LE u64 appId); seal=HMAC||AES-256-ECB
   (PKCS7); open w/ constant-time compare + reject rules.
   - [ ] seal→open round-trip · tamper/short rejected · reference vector opens
