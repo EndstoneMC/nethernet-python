@@ -19,6 +19,7 @@ from nethernet.constants import (
     DEFAULT_NEGOTIATION_TIMEOUT,
 )
 from nethernet.discovery.lan import Address, LanTransport
+from nethernet.errors import ESessionError
 from nethernet.network_id import NetworkID, NetworkIDType
 from nethernet.session import Session
 from nethernet.session_manager import SessionManager
@@ -34,14 +35,17 @@ class Transport:
         application_id: int = DEFAULT_APPLICATION_ID,
         port: int = DEFAULT_BROADCAST_PORT,
         bind_host: str = "",
+        broadcast_host: str = "255.255.255.255",
+        broadcast_port: int | None = None,
         broadcast_interval: float = DEFAULT_BROADCAST_INTERVAL,
         negotiation_timeout: float = DEFAULT_NEGOTIATION_TIMEOUT,
         ice_servers: list | None = None,
         relay_only: bool = False,
         advertisement: bytes | None = None,
         on_session: Callable[[Session], None] | None = None,
+        on_session_close: Callable[[Session, ESessionError], None] | None = None,
         on_packet: Callable[[Session, bytes], None] | None = None,
-        on_host_discovered: Callable[[NetworkID, bytes], None] | None = None,
+        on_host_discovered: Callable[[NetworkID, bytes, Address], None] | None = None,
     ) -> None:
         if local_id.type is not NetworkIDType.P2P:
             raise ValueError("LAN transport requires a P2P NetworkID")
@@ -55,6 +59,7 @@ class Transport:
             local_id=local_id,
             send_signal=self._send_signal,
             on_session_open=on_session,
+            on_session_close=on_session_close,
             on_packet=on_packet,
             ice_servers=ice_servers,
             relay_only=relay_only,
@@ -65,6 +70,8 @@ class Transport:
             application_id=application_id,
             port=port,
             bind_host=bind_host,
+            broadcast_host=broadcast_host,
+            broadcast_port=broadcast_port,
             broadcast_interval=broadcast_interval,
             on_signal=self._on_lan_signal,
             on_host_discovered=self._handle_host_discovered,
@@ -130,7 +137,7 @@ class Transport:
         self._tasks.add(task)
         task.add_done_callback(self._tasks.discard)
 
-    def _handle_host_discovered(self, network_id: NetworkID, data: bytes) -> None:
+    def _handle_host_discovered(self, network_id: NetworkID, data: bytes, addr: Address) -> None:
         self._discovered[network_id] = data
         if self._on_host_discovered is not None:
-            self._on_host_discovered(network_id, data)
+            self._on_host_discovered(network_id, data, addr)

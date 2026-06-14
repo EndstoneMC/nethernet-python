@@ -48,16 +48,20 @@ class LanTransport(asyncio.DatagramProtocol):
         port: int = DEFAULT_BROADCAST_PORT,
         bind_host: str = "",
         broadcast_host: str = "255.255.255.255",
+        broadcast_port: int | None = None,
         broadcast_interval: float = DEFAULT_BROADCAST_INTERVAL,
         on_signal: Callable[[NetworkID, str], None] | None = None,
-        on_host_discovered: Callable[[NetworkID, bytes], None] | None = None,
+        on_host_discovered: Callable[[NetworkID, bytes, Address], None] | None = None,
         get_advertisement: Callable[[], bytes | None] | None = None,
     ) -> None:
         self._local_id = local_id
         self._envelope = Envelope(application_id)
         self._port = port
         self._bind_host = bind_host
-        self._broadcast_addr: Address = (broadcast_host, port)
+        # Broadcast/target port defaults to the bind port, but may be decoupled so a peer on an
+        # ephemeral bind port can direct Requests at a known host:port (loopback / directed).
+        target_port = port if broadcast_port is None else broadcast_port
+        self._broadcast_addr: Address = (broadcast_host, target_port)
         self._broadcast_interval = broadcast_interval
         self._on_signal = on_signal
         self._on_host_discovered = on_host_discovered
@@ -161,7 +165,9 @@ class LanTransport(asyncio.DatagramProtocol):
             self._handle_request(addr)
         elif isinstance(packet, DiscoveryResponse):
             if self._on_host_discovered is not None:
-                self._on_host_discovered(NetworkID.p2p(packet.sender_id), packet.application_data)
+                self._on_host_discovered(
+                    NetworkID.p2p(packet.sender_id), packet.application_data, addr
+                )
         elif isinstance(packet, DiscoveryMessage):
             self._handle_message(packet)
 

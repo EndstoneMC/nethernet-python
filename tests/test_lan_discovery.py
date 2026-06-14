@@ -72,11 +72,22 @@ def test_request_is_ignored_when_not_advertising():
     assert fake.sent == []
 
 
-def test_response_delivers_discovered_host():
+def test_response_delivers_discovered_host_with_source_address():
     seen = []
-    t, _ = make_transport(111, on_host_discovered=lambda nid, data: seen.append((nid, data)))
+    t, _ = make_transport(
+        111, on_host_discovered=lambda nid, data, addr: seen.append((nid, data, addr))
+    )
     t.datagram_received(ENV.seal(DiscoveryResponse(222, b"adv").serialize()), ("10.0.0.9", 7551))
-    assert seen == [(NetworkID.p2p(222), b"adv")]
+    assert seen == [(NetworkID.p2p(222), b"adv", ("10.0.0.9", 7551))]
+
+
+def test_broadcast_request_targets_configured_broadcast_port():
+    # Bind port and broadcast target port are decoupled so a client on an ephemeral port can
+    # direct its Request at a known host:port (used for loopback / directed discovery).
+    t, fake = make_transport(111, broadcast_host="127.0.0.1", broadcast_port=9999)
+    t.broadcast_request()
+    _data, addr = fake.sent[0]
+    assert addr == ("127.0.0.1", 9999)
 
 
 def test_own_packets_are_ignored():
