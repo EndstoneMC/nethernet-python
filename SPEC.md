@@ -531,3 +531,12 @@ An implementation **SHOULD** be validated by:
   **standard** ICE-candidate serialization (the `candidate:` SDP attribute value), not a
   NetherNet-specific format — an implementation interoperates by emitting standard WebRTC
   candidate lines.
+- **LAN first-discovery probe (optional).** When a peer first records a newly-seen peer in
+  its discovery table — i.e. on any non-`Request` packet (§7.3) whose `SenderId` is non-zero
+  and not already known — a reference peer sends that peer a **Message** packet (§7.3) with
+  `SenderId = 0` and an **empty** `messageData`. Because the payload is an empty string it is
+  ignored by signaling parsing (§5.2), and the zero `SenderId` stops the recipient from
+  treating it as a new discovery (so no probe is echoed back) — it is effectively a
+  presence/keepalive ping toward the discovered peer's address. Emitting it is **OPTIONAL**: a
+  peer interoperates without it and receivers already drop it, but an implementation comparing
+  wire traffic against a reference peer will observe these empty Messages.

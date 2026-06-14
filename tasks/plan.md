@@ -213,9 +213,12 @@ runnable, tested capability rather than a horizontal layer.
   `SenderId`**; Request→build Response from app advertisement; Response→deliver discovered host;
   Message→if `RecipientId==self` feed to signaling; peer/address cache for unicast; periodic
   Request broadcast (default 2000 ms). Implements the §5.1 signaling channel by wrapping
-  outbound signals in `Message` packets. *AC:* two `LanTransport`s over loopback exchange
+  outbound signals in `Message` packets. Must tolerate the **optional first-discovery probe**
+  (§12 note): a `Message` with `SenderId = 0` and empty `messageData` — empty payload is ignored
+  by signaling parsing and `SenderId = 0` must not be recorded as a new peer (emitting it is
+  optional; receiving it must not break). *AC:* two `LanTransport`s over loopback exchange
   Request/Response (discovery) and Message (signaling) successfully; self-packets ignored;
-  bad-MAC datagrams dropped. *Verify:* `uv run pytest tests/test_lan_discovery.py`. *Files:*
+  bad-MAC datagrams dropped; an empty `SenderId=0` Message is dropped without side effects. *Verify:* `uv run pytest tests/test_lan_discovery.py`. *Files:*
   `src/nethernet/discovery/lan.py`, `src/nethernet/signaling/channel.py`, tests. *Scope: L →
   split (12a discovery Request/Response, 12b signaling Message binding + periodic broadcast).* 
 - **Task 13: Public Transport API + examples.** Façade tying SessionManager + LanTransport:
