@@ -6,6 +6,9 @@ internal Transport engine. These exercise the public contract only.
 
 from __future__ import annotations
 
+import importlib.util
+from pathlib import Path
+
 import pytest
 
 from nethernet.api import DiscoveredHost, connect, discover, serve
@@ -19,6 +22,24 @@ from nethernet.errors import (
 from nethernet.network_id import NetworkID
 
 LOOPBACK = "127.0.0.1"
+
+# --- Examples (docs/api-design.md s4) ---
+
+
+def _load_example(name: str):
+    path = Path(__file__).resolve().parent.parent / "examples" / name
+    spec = importlib.util.spec_from_file_location(name[:-3], path)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+def test_examples_import_and_expose_main():
+    server = _load_example("server.py")
+    client = _load_example("client.py")
+    assert callable(server.main)
+    assert callable(client.main)
+
 
 # --- Public surface (docs/api-design.md s3.6) ---
 
