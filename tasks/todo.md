@@ -83,12 +83,13 @@ Phase 1 (3–6) may be parallelized.
   byte vectors.
   - [x] 11 conformance tests green (`uv run pytest -m conformance`); golden hex for
     signaling/discovery/envelope
-- [ ] **15. Live interop** (§11.3) — real Bedrock and/or `../NetherNet` build: discovery
-  Request→Response + full session → data channels → app traffic; fix & document deltas.
-  - [ ] documented successful interop (or precise logged blocker) in
-    `tasks/interop-results.md`
+- [~] **15. Live interop** (§11.3) — **BLOCKED: needs an external reference peer.** Requires
+  real Minecraft Bedrock on the LAN (or a custom C++ driver — the `../NetherNet` project builds
+  a static lib, not a runnable peer). Harness + instructions in `tasks/interop-results.md`.
+  - [x] interop harness documented; Python↔Python over real UDP verified as a stand-in
+  - [ ] live run against a non-Python reference peer (needs user / hardware)
 
-### ▣ Checkpoint F — Complete: conformance green, interop validated, ready for review
+### ▣ Checkpoint F — Complete pending live interop (Task 15); all else green (114 tests)
 
 ---
 
