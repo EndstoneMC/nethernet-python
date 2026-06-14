@@ -19,9 +19,9 @@ Phase 1 (3–6) may be parallelized.
 ### ▣ Checkpoint A — env builds, biggest WebRTC unknown resolved → review
 
 ## Phase 1 — Pure codecs (byte-exact; 3–6 parallelizable)
-- [ ] **3. NetworkID & ConnectionId** (§3) — P2P u64 decimal, parse order (decimal→UUID→
+- [x] **3. NetworkID & ConnectionId** (§3) — P2P u64 decimal, parse order (decimal→UUID→
   invalid), correlation id (§3.4), random connId (§3.3).
-  - [ ] round-trip parse/format · correlation id format · 64-bit random connId
+  - [x] round-trip parse/format · correlation id format · 64-bit random connId (14 tests)
 - [ ] **4. Signaling message codec** (§5) — 4 messages; first-two-spaces tokenizer; reject
   unknown id / non-u64 connId / <3 tokens; `errors.py` enums.
   - [ ] SDP-with-newlines round-trips · malformed rejected · exact serialization
