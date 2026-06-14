@@ -95,7 +95,7 @@ Phase 1 (3–6) may be parallelized.
 Mirror BDS's `Connector`/`NetworkPeer` shape: module-level `connect()`/`serve()`/`discover()`
 returning a single `Connection` + `Server`; `Transport` demoted to internal engine. Keep the
 114 protocol tests green; add `tests/test_api.py`.
-- [ ] **16. Public exceptions** — `NetherNetError`, `ConnectionFailed`, `ConnectionClosed`
+- [x] **16. Public exceptions** — `NetherNetError`, `ConnectionFailed`, `ConnectionClosed`
   (each carrying `ESessionError`) in `errors.py`.
 - [ ] **17. Engine hooks** — `LanTransport`: `broadcast_port` (default = `port`); pass source
   `Address` to `on_host_discovered`. `Transport`: `on_session_close` passthrough; thread
