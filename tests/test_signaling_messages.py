@@ -18,23 +18,23 @@ CANDIDATE = "candidate:1 1 udp 2130706431 10.0.0.5 54321 typ host generation 0"
 
 
 def test_send_type_values():
-    assert ESendType.Unreliable == 0
-    assert ESendType.Reliable == 1
+    assert ESendType.UNRELIABLE == 0
+    assert ESendType.RELIABLE == 1
 
 
 def test_session_error_values_are_stable():
     assert ESessionError.NONE == 0
     assert ESessionError.ICE == 5
-    assert ESessionError.SignalingUnicastMessageDeliveryFailed == 19
-    assert ESessionError.DataChannelClosed == 32
-    assert ESessionError.GenericFailure == 35
+    assert ESessionError.SIGNALING_UNICAST_MESSAGE_DELIVERY_FAILED == 19
+    assert ESessionError.DATA_CHANNEL_CLOSED == 32
+    assert ESessionError.GENERIC_FAILURE == 35
 
 
 def test_connection_flags_are_a_bitmask():
     assert EConnectionFlags.NONE == 0
-    assert EConnectionFlags.RelayOnly == 1
-    assert EConnectionFlags.NoRelayCandidates == 32
-    combo = EConnectionFlags.RelayOnly | EConnectionFlags.NoTCPCandidates
+    assert EConnectionFlags.RELAY_ONLY == 1
+    assert EConnectionFlags.NO_RELAY_CANDIDATES == 32
+    combo = EConnectionFlags.RELAY_ONLY | EConnectionFlags.NO_TCP_CANDIDATES
     assert combo == 3
 
 
@@ -54,7 +54,7 @@ def test_candidate_add_serialize():
 
 
 def test_connect_error_serialize_uses_decimal_error():
-    msg = ConnectError(7, ESessionError.SignalingUnicastMessageDeliveryFailed)
+    msg = ConnectError(7, ESessionError.SIGNALING_UNICAST_MESSAGE_DELIVERY_FAILED)
     assert msg.serialize() == "CONNECTERROR 7 19"
 
 
@@ -79,7 +79,7 @@ def test_candidate_add_roundtrip_preserves_spaces():
 
 def test_connect_error_roundtrip_maps_to_enum():
     msg = parse("CONNECTERROR 7 19")
-    assert msg == ConnectError(7, ESessionError.SignalingUnicastMessageDeliveryFailed)
+    assert msg == ConnectError(7, ESessionError.SIGNALING_UNICAST_MESSAGE_DELIVERY_FAILED)
     assert msg.error == 19
 
 

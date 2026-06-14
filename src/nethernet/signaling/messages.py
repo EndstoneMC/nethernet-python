@@ -11,7 +11,7 @@ the **first two spaces only** and treats the remainder as ``data``.
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Union
+from typing import TypeAlias
 
 from nethernet.errors import ESessionError
 from nethernet.network_id import U64_MAX
@@ -65,7 +65,7 @@ class ConnectError:
         return f"{self.IDENTIFIER} {self.connection_id} {int(self.error)}"
 
 
-SignalingMessage = Union[ConnectRequest, ConnectResponse, CandidateAdd, ConnectError]
+SignalingMessage: TypeAlias = ConnectRequest | ConnectResponse | CandidateAdd | ConnectError
 
 _BY_IDENTIFIER = {
     ConnectRequest.IDENTIFIER: ConnectRequest,

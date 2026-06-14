@@ -17,6 +17,7 @@ dependencies = [
 dev = [
     "pytest>=8",
     "pytest-asyncio>=0.24",
+    "ruff>=0.6",
 ]
 
 [build-system]
@@ -30,3 +31,11 @@ packages = ["src/nethernet"]
 # aiortc is asyncio-based; auto mode lets async test functions run without per-test markers.
 asyncio_mode = "auto"
 testpaths = ["tests"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+
+[tool.ruff.lint]
+# E/W pycodestyle, F pyflakes, I import sorting, N pep8-naming, UP pyupgrade, B bugbear.
+select = ["E", "W", "F", "I", "N", "UP", "B"]
