@@ -67,3 +67,23 @@ class EConnectionFlags(IntFlag):
     NO_SERVER_REFLEXIVE_CANDIDATES = 8  # NoServerReflexiveCandidates
     NO_PEER_REFLEXIVE_CANDIDATES = 16  # NoPeerReflexiveCandidates
     NO_RELAY_CANDIDATES = 32  # NoRelayCandidates
+
+
+class NetherNetError(Exception):
+    """Base class for all public NetherNet exceptions (docs/api-design.md s3.5)."""
+
+
+class ConnectionFailed(NetherNetError):  # noqa: N818 - websockets-style name (no Error suffix)
+    """``connect()`` never reached the CONNECTED state (negotiation timeout / ICE failure)."""
+
+    def __init__(self, error: ESessionError) -> None:
+        self.error = error
+        super().__init__(f"connection failed: {error.name} ({int(error)})")
+
+
+class ConnectionClosed(NetherNetError):  # noqa: N818 - websockets-style name (no Error suffix)
+    """``send()``/``recv()`` on a closed connection; ``error == NONE`` for a clean close."""
+
+    def __init__(self, error: ESessionError = ESessionError.NONE) -> None:
+        self.error = error
+        super().__init__(f"connection closed: {error.name} ({int(error)})")
