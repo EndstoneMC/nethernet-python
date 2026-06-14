@@ -28,11 +28,12 @@ Phase 1 (3–6) may be parallelized.
 - [x] **5. Discovery packet codec** (§7.2–7.3) — packed 20/24/32-byte headers, LE via
   `struct`, payload caps 1148/1140, computed `PacketLength`.
   - [x] byte fixtures match offsets · build↔parse round-trip (13 tests)
-- [ ] **6. LAN crypto envelope** (§8) — key=SHA256(LE u64 appId); seal=HMAC||AES-256-ECB
+- [x] **6. LAN crypto envelope** (§8) — key=SHA256(LE u64 appId); seal=HMAC||AES-256-ECB
   (PKCS7); open w/ constant-time compare + reject rules.
-  - [ ] seal→open round-trip · tamper/short rejected · reference vector opens
+  - [x] seal→open round-trip · tamper/short rejected · **byte-exact match vs independent
+    OpenSSL golden vector** (9 tests)
 
-### ▣ Checkpoint B — codecs green; differential byte-diff vs reference → review
+### ▣ Checkpoint B — codecs green (56 tests, ruff clean); seal matches OpenSSL vector ✓ → pushed
 
 ## Phase 2 — WebRTC data path
 - [ ] **7. Fragmentation / PacketQueue** (§6.3–6.4) — countdown headers; `>0x3FBFF01` reject;
