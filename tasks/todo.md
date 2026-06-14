@@ -91,6 +91,23 @@ Phase 1 (3–6) may be parallelized.
 
 ### ▣ Checkpoint F — Complete pending live interop (Task 15); all else green (114 tests)
 
+## Phase 6 — Public API rework (websockets-style, mirrors BDS) — see `docs/api-design.md`
+Mirror BDS's `Connector`/`NetworkPeer` shape: module-level `connect()`/`serve()`/`discover()`
+returning a single `Connection` + `Server`; `Transport` demoted to internal engine. Keep the
+114 protocol tests green; add `tests/test_api.py`.
+- [ ] **16. Public exceptions** — `NetherNetError`, `ConnectionFailed`, `ConnectionClosed`
+  (each carrying `ESessionError`) in `errors.py`.
+- [ ] **17. Engine hooks** — `LanTransport`: `broadcast_port` (default = `port`); pass source
+  `Address` to `on_host_discovered`. `Transport`: `on_session_close` passthrough; thread
+  `broadcast_port`; carry addr in discovery. Update the one affected LAN test.
+- [ ] **18. `api.py`** — `Connection` (await send/recv/`async for`/close/wait_closed), `Server`
+  (serve_forever/aclose), `DiscoveredHost`, and `connect()`/`serve()`/`discover()` over an
+  internal `_Endpoint` wrapping `Transport`.
+- [ ] **19. Exports** — `__init__.py` exports the new surface; drop `Transport` from public.
+- [ ] **20. Examples** — `examples/server.py` + `examples/client.py`; remove `host.py`/`join.py`.
+
+### ▣ Checkpoint G — public async API (connect/serve/Connection) green; examples run
+
 ---
 
 ## Resolved decisions (confirmed 2026-06-14)
