@@ -51,7 +51,7 @@ class Session:
         send_signal: Callable[[str], None],
         on_open: Callable[[Session], None] | None = None,
         on_close: Callable[[Session, ESessionError], None] | None = None,
-        on_packet: Callable[[bytes], None] | None = None,
+        on_packet: Callable[[Session, bytes], None] | None = None,
         ice_servers: list | None = None,
         relay_only: bool = False,
         negotiation_timeout: float = DEFAULT_NEGOTIATION_TIMEOUT,
@@ -155,7 +155,7 @@ class Session:
 
     def _handle_packet(self, data: bytes) -> None:
         if self._on_packet is not None:
-            self._on_packet(data)
+            self._on_packet(self, data)
 
     # -- application I/O ----------------------------------------------------------------
 

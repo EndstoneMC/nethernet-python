@@ -57,11 +57,11 @@ Phase 1 (3–6) may be parallelized.
   buffering; channels via on-datachannel; §5.5 error-19 nuance.
   - [x] well-formed answer · ignores CONNECTERROR(19) incoming · timeout 15 · candidate
     buffering (5 tests)
-- [ ] **11. SessionManager + routing** — connId→session map; dispatch inbound; create listener
+- [x] **11. SessionManager + routing** — connId→session map; dispatch inbound; create listener
   on unknown CONNECTREQUEST; ignore unknown/unparseable.
-  - [ ] full handshake over one in-memory channel pair; traffic both ways
+  - [x] full handshake over one in-memory channel pair; traffic both ways (2 tests)
 
-### ▣ Checkpoint D — end-to-end in-process session (mock signaling), all packet kinds → review
+### ▣ Checkpoint D — end-to-end in-process session (mock signaling), all packet kinds (88 tests) ✓ → pushed
 
 ## Phase 4 — LAN binding & public API
 - [ ] **12. LanTransport** (§7–§8) — asyncio UDP, v4 broadcast + v6 link-local, seal/open
