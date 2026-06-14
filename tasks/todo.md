@@ -53,9 +53,10 @@ Phase 1 (3–6) may be parallelized.
   flush candidates; ICE connected→open; timeouts 14/15; CONNECTERROR→close.
   - [x] emits expected messages in order · timeout closes with 14 · candidate buffering ·
     error 19 closes dialer (§5.5) (6 tests)
-- [ ] **10. Listener state machine** (§9.2) — CONNECTREQUEST→answer→CONNECTRESPONSE; candidate
+- [x] **10. Listener state machine** (§9.2) — CONNECTREQUEST→answer→CONNECTRESPONSE; candidate
   buffering; channels via on-datachannel; §5.5 error-19 nuance.
-  - [ ] well-formed answer · ignores CONNECTERROR(19) incoming · opens on ICE connected
+  - [x] well-formed answer · ignores CONNECTERROR(19) incoming · timeout 15 · candidate
+    buffering (5 tests)
 - [ ] **11. SessionManager + routing** — connId→session map; dispatch inbound; create listener
   on unknown CONNECTREQUEST; ignore unknown/unparseable.
   - [ ] full handshake over one in-memory channel pair; traffic both ways

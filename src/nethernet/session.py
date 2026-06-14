@@ -101,6 +101,8 @@ class Session:
             await self._pc.add_remote_candidate(message.candidate)
         elif self.is_dialer and isinstance(message, ConnectResponse):
             await self._handle_response(message)
+        elif not self.is_dialer and isinstance(message, ConnectRequest):
+            await self._handle_request(message)
         # other messages (e.g. ConnectRequest to a dialer) are ignored
 
     async def _handle_response(self, message: ConnectResponse) -> None:
@@ -109,6 +111,15 @@ class Session:
         self.state = SessionState.NEGOTIATING
         self._arm_timeout(ESessionError.NEGOTIATION_TIMEOUT_WAITING_FOR_ACCEPT)
         await self._pc.set_remote_answer(message.sdp)
+
+    async def _handle_request(self, message: ConnectRequest) -> None:
+        """Listener: apply the offer, answer, and send CONNECTRESPONSE (SPEC.md s9.2)."""
+        if self.state != SessionState.IDLE:
+            return
+        answer = await self._pc.create_answer(message.sdp)
+        self.state = SessionState.ANSWER_SENT
+        self._send_signal(ConnectResponse(self.connection_id, answer).serialize())
+        self._arm_timeout(ESessionError.NEGOTIATION_TIMEOUT_WAITING_FOR_ACCEPT)
 
     def _handle_connect_error(self, message: ConnectError) -> None:
         # SPEC.md s5.5: a SignalingUnicastMessageDeliveryFailed (19) MUST NOT close an incoming
