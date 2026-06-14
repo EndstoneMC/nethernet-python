@@ -100,7 +100,7 @@ returning a single `Connection` + `Server`; `Transport` demoted to internal engi
 - [x] **17. Engine hooks** — `LanTransport`: `broadcast_port` (default = `port`); pass source
   `Address` to `on_host_discovered`. `Transport`: `on_session_close` passthrough; thread
   `broadcast_port`; carry addr in discovery. Update the one affected LAN test.
-- [ ] **18. `api.py`** — `Connection` (await send/recv/`async for`/close/wait_closed), `Server`
+- [x] **18. `api.py`** — `Connection` (await send/recv/`async for`/close/wait_closed), `Server`
   (serve_forever/aclose), `DiscoveredHost`, and `connect()`/`serve()`/`discover()` over an
   internal `_Endpoint` wrapping `Transport`.
 - [ ] **19. Exports** — `__init__.py` exports the new surface; drop `Transport` from public.
