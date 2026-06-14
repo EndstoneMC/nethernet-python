@@ -78,9 +78,11 @@ Phase 1 (3–6) may be parallelized.
 ### ▣ Checkpoint E — two Transports connect over real UDP end-to-end (103 tests) ✓ → pushed
 
 ## Phase 5 — Conformance & live interop
-- [ ] **14. Conformance suite** (§11.1/.2/.4) — codec round-trips byte-equal; fragmentation
-  fixtures; sealed-envelope vector opens under reference; differential vs reference builders.
-  - [ ] all conformance items green (`uv run pytest -q -m conformance`)
+- [x] **14. Conformance suite** (§11.1/.2/.4) — codec round-trips byte-equal; fragmentation
+  fixtures; sealed-envelope vector opens under reference; differential vs hand-derived golden
+  byte vectors.
+  - [x] 11 conformance tests green (`uv run pytest -m conformance`); golden hex for
+    signaling/discovery/envelope
 - [ ] **15. Live interop** (§11.3) — real Bedrock and/or `../NetherNet` build: discovery
   Request→Response + full session → data channels → app traffic; fix & document deltas.
   - [ ] documented successful interop (or precise logged blocker) in

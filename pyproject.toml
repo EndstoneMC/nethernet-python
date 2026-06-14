@@ -34,6 +34,7 @@ asyncio_mode = "auto"
 testpaths = ["tests"]
 # Run in parallel (pytest-xdist): the aiortc handshake tests are I/O-bound, so this is a big win.
 addopts = "-n auto"
+markers = ["conformance: SPEC.md s11 conformance / differential byte-vector fixtures"]
 
 [tool.ruff]
 line-length = 100
