@@ -49,9 +49,10 @@ Phase 1 (3–6) may be parallelized.
 ### ▣ Checkpoint C — in-process WebRTC handshake + framed app traffic (75 tests) ✓ → pushed
 
 ## Phase 3 — Session orchestration
-- [ ] **9. Dialer state machine** (§9.1) — offer→CONNECTREQUEST; CONNECTRESPONSE→setRemote+
+- [x] **9. Dialer state machine** (§9.1) — offer→CONNECTREQUEST; CONNECTRESPONSE→setRemote+
   flush candidates; ICE connected→open; timeouts 14/15; CONNECTERROR→close.
-  - [ ] emits expected messages in order · timeout closes with 14
+  - [x] emits expected messages in order · timeout closes with 14 · candidate buffering ·
+    error 19 closes dialer (§5.5) (6 tests)
 - [ ] **10. Listener state machine** (§9.2) — CONNECTREQUEST→answer→CONNECTRESPONSE; candidate
   buffering; channels via on-datachannel; §5.5 error-19 nuance.
   - [ ] well-formed answer · ignores CONNECTERROR(19) incoming · opens on ICE connected
