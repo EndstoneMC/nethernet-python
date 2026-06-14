@@ -103,7 +103,7 @@ returning a single `Connection` + `Server`; `Transport` demoted to internal engi
 - [x] **18. `api.py`** — `Connection` (await send/recv/`async for`/close/wait_closed), `Server`
   (serve_forever/aclose), `DiscoveredHost`, and `connect()`/`serve()`/`discover()` over an
   internal `_Endpoint` wrapping `Transport`.
-- [ ] **19. Exports** — `__init__.py` exports the new surface; drop `Transport` from public.
+- [x] **19. Exports** — `__init__.py` exports the new surface; drop `Transport` from public.
 - [ ] **20. Examples** — `examples/server.py` + `examples/client.py`; remove `host.py`/`join.py`.
 
 ### ▣ Checkpoint G — public async API (connect/serve/Connection) green; examples run

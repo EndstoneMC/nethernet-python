@@ -8,7 +8,6 @@ from nethernet import (
     ESendType,
     NetworkID,
     SessionState,
-    Transport,
 )
 from nethernet.constants import (
     DEFAULT_APPLICATION_ID,
@@ -16,6 +15,7 @@ from nethernet.constants import (
     DEFAULT_BROADCAST_PORT,
     DEFAULT_NEGOTIATION_TIMEOUT,
 )
+from nethernet.transport_api import Transport
 
 
 async def wait_for(predicate, timeout=30.0):

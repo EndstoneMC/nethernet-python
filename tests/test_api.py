@@ -20,6 +20,37 @@ from nethernet.network_id import NetworkID
 
 LOOPBACK = "127.0.0.1"
 
+# --- Public surface (docs/api-design.md s3.6) ---
+
+
+def test_public_surface_is_exported_and_transport_is_internal():
+    import nethernet
+
+    for name in (
+        "connect",
+        "serve",
+        "discover",
+        "Connection",
+        "Server",
+        "DiscoveredHost",
+        "NetworkID",
+        "NetworkIDType",
+        "new_connection_id",
+        "SessionState",
+        "ESendType",
+        "ESessionError",
+        "EConnectionFlags",
+        "NetherNetError",
+        "ConnectionFailed",
+        "ConnectionClosed",
+        "Address",
+    ):
+        assert hasattr(nethernet, name), f"missing public export: {name}"
+
+    # Transport is the internal engine — not part of the public top-level surface.
+    assert not hasattr(nethernet, "Transport")
+
+
 # --- Exceptions (docs/api-design.md s3.5) ---
 
 
