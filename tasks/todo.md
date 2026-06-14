@@ -69,12 +69,13 @@ Phase 1 (3–6) may be parallelized.
   Request; implements signaling channel via Message packets; tolerates the §12 empty probe.
   - [x] real-UDP loopback Message exchange + logic tests: Request/Response, self ignored,
     bad-MAC dropped, unicast vs broadcast (12 tests). Added `constants.py` (§10 defaults).
-- [ ] **13. Public Transport API + examples** — config (appId/port/interval/timeout/
+- [x] **13. Public Transport API + examples** — config (appId/port/interval/timeout/
   iceServers/flags); advertise+answer; `discover()`; `connect()`; accept incoming; `send`/
-  `recv` by ESendType; `close()`; `examples/host.py`, `examples/join.py`.
-  - [ ] API documented · examples run · defaults match §10
+  `recv` by ESendType; `aclose()`; `examples/host.py`, `examples/join.py`.
+  - [x] API documented + exported · examples written · defaults match §10 · **trickle-ICE fix**
+    (strip candidates from SDP → CANDIDATEADD) so signaling fits the 1140-byte cap (3 tests)
 
-### ▣ Checkpoint E — two Python processes connect over real LAN UDP end-to-end → review
+### ▣ Checkpoint E — two Transports connect over real UDP end-to-end (103 tests) ✓ → pushed
 
 ## Phase 5 — Conformance & live interop
 - [ ] **14. Conformance suite** (§11.1/.2/.4) — codec round-trips byte-equal; fragmentation
