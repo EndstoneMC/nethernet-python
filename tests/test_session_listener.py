@@ -15,6 +15,10 @@ from nethernet.signaling.messages import (
 from nethernet.transport.peer_connection import PeerConnection
 
 
+def parsed_messages(sent):
+    return [parse(s) for s in sent]
+
+
 async def make_offer() -> str:
     pc = PeerConnection(is_dialer=True)
     offer = await pc.create_offer()
@@ -41,11 +45,12 @@ async def test_request_produces_connect_response_answer():
     s = make_listener(sent)
     try:
         await s.handle_signal(ConnectRequest(777, offer))
-        assert len(sent) == 1
-        msg = parse(sent[0])
-        assert isinstance(msg, ConnectResponse)
-        assert msg.connection_id == 777
-        assert "v=0" in msg.sdp  # a real SDP answer
+        messages = parsed_messages(sent)
+        assert isinstance(messages[0], ConnectResponse)
+        assert messages[0].connection_id == 777
+        assert "v=0" in messages[0].sdp  # a real SDP answer
+        assert "a=candidate" not in messages[0].sdp  # candidates trickled separately
+        assert all(isinstance(m, CandidateAdd) for m in messages[1:])
         assert s.state == SessionState.ANSWER_SENT
     finally:
         await s.aclose()

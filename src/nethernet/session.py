@@ -25,7 +25,7 @@ from nethernet.signaling.messages import (
     ConnectResponse,
     SignalingMessage,
 )
-from nethernet.transport.peer_connection import PeerConnection
+from nethernet.transport.peer_connection import PeerConnection, strip_candidates
 
 
 class SessionState(Enum):
@@ -82,10 +82,11 @@ class Session:
     # -- dialer entry point ------------------------------------------------------------
 
     async def start(self) -> None:
-        """Dialer: create the offer and send CONNECTREQUEST (SPEC.md s9.1)."""
-        offer = await self._pc.create_offer()
+        """Dialer: create the offer and send CONNECTREQUEST + trickle candidates (SPEC.md s9.1)."""
+        offer, candidates = strip_candidates(await self._pc.create_offer())
         self.state = SessionState.OFFER_SENT
         self._send_signal(ConnectRequest(self.connection_id, offer).serialize())
+        self._send_candidates(candidates)
         self._arm_timeout(ESessionError.NEGOTIATION_TIMEOUT_WAITING_FOR_RESPONSE)
 
     # -- inbound signaling -------------------------------------------------------------
@@ -112,13 +113,18 @@ class Session:
         await self._pc.set_remote_answer(message.sdp)
 
     async def _handle_request(self, message: ConnectRequest) -> None:
-        """Listener: apply the offer, answer, and send CONNECTRESPONSE (SPEC.md s9.2)."""
+        """Listener: apply the offer, answer, send CONNECTRESPONSE + candidates (SPEC.md s9.2)."""
         if self.state != SessionState.IDLE:
             return
-        answer = await self._pc.create_answer(message.sdp)
+        answer, candidates = strip_candidates(await self._pc.create_answer(message.sdp))
         self.state = SessionState.ANSWER_SENT
         self._send_signal(ConnectResponse(self.connection_id, answer).serialize())
+        self._send_candidates(candidates)
         self._arm_timeout(ESessionError.NEGOTIATION_TIMEOUT_WAITING_FOR_ACCEPT)
+
+    def _send_candidates(self, candidates: list[str]) -> None:
+        for candidate in candidates:
+            self._send_signal(CandidateAdd(self.connection_id, candidate).serialize())
 
     def _handle_connect_error(self, message: ConnectError) -> None:
         # SPEC.md s5.5: a SignalingUnicastMessageDeliveryFailed (19) MUST NOT close an incoming

@@ -53,6 +53,26 @@ def set_max_message_size(sdp: str, value: int = MAX_MESSAGE_SIZE) -> str:
     return "".join(out)
 
 
+def strip_candidates(sdp: str) -> tuple[str, list[str]]:
+    """Split an SDP into a candidate-free SDP and the list of ``candidate:...`` strings.
+
+    The LAN signaling Message payload is capped at 1140 bytes (SPEC.md s7.3), too small for an
+    SDP with all candidates embedded. So the session sends the candidate-free offer/answer and
+    streams candidates separately as CANDIDATEADD messages (trickle ICE, SPEC.md s9.3).
+    """
+    kept: list[str] = []
+    candidates: list[str] = []
+    for line in sdp.splitlines(keepends=True):
+        stripped = line.strip()
+        if stripped.startswith("a=candidate:"):
+            candidates.append(stripped[len("a=") :])  # "candidate:..."
+        elif stripped == "a=end-of-candidates":
+            continue  # we trickle candidates separately
+        else:
+            kept.append(line)
+    return "".join(kept), candidates
+
+
 def keep_only_relay_candidates(sdp: str) -> str:
     """Drop every ``a=candidate:`` line that is not ``typ relay`` (best-effort RelayOnly)."""
     out = [

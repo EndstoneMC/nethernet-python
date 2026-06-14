@@ -12,6 +12,10 @@ from nethernet.session import Session, SessionState
 from nethernet.signaling.messages import CandidateAdd, ConnectError, ConnectRequest, parse
 
 
+def parsed_messages(sent):
+    return [parse(s) for s in sent]
+
+
 def make_dialer(sent, *, on_open=None, on_close=None, timeout=10.0):
     return Session(
         connection_id=4242,
@@ -30,11 +34,13 @@ async def test_start_sends_connect_request_with_offer():
     s = make_dialer(sent)
     try:
         await s.start()
-        assert len(sent) == 1
-        msg = parse(sent[0])
-        assert isinstance(msg, ConnectRequest)
-        assert msg.connection_id == 4242
-        assert "v=0" in msg.sdp  # a real SDP offer
+        messages = parsed_messages(sent)
+        # First message is the offer; any following messages are trickled candidates.
+        assert isinstance(messages[0], ConnectRequest)
+        assert messages[0].connection_id == 4242
+        assert "v=0" in messages[0].sdp  # a real SDP offer
+        assert "a=candidate" not in messages[0].sdp  # candidates are trickled separately
+        assert all(isinstance(m, CandidateAdd) for m in messages[1:])
         assert s.state == SessionState.OFFER_SENT
     finally:
         await s.aclose()

@@ -12,7 +12,10 @@ from collections.abc import Callable
 from nethernet.errors import ESessionError
 from nethernet.network_id import NetworkID, new_connection_id
 from nethernet.session import DEFAULT_NEGOTIATION_TIMEOUT, Session
-from nethernet.signaling.messages import ConnectRequest, parse
+from nethernet.signaling.messages import CandidateAdd, ConnectRequest, parse
+
+# Cap on candidates buffered for a not-yet-created session, to bound memory from stray messages.
+_MAX_PENDING_CANDIDATES = 64
 
 
 class SessionManager:
@@ -39,6 +42,9 @@ class SessionManager:
         self._relay_only = relay_only
         self._negotiation_timeout = negotiation_timeout
         self._sessions: dict[int, Session] = {}
+        # Candidates may arrive (UDP reordering) before the CONNECTREQUEST that creates the
+        # listener session; buffer them per connection id and flush once it exists.
+        self._pending_candidates: dict[int, list[CandidateAdd]] = {}
 
     @property
     def local_id(self) -> NetworkID:
@@ -57,10 +63,25 @@ class SessionManager:
             return  # unrecognized / malformed -> ignore (SPEC.md s5.2)
         session = self._sessions.get(parsed.connection_id)
         if session is None:
-            if not isinstance(parsed, ConnectRequest):
-                return  # no such session and not a new request -> ignore
-            session = self._create_session(parsed.connection_id, sender_id, is_dialer=False)
+            if isinstance(parsed, ConnectRequest):
+                session = self._create_session(parsed.connection_id, sender_id, is_dialer=False)
+                await session.handle_signal(parsed)
+                await self._flush_pending_candidates(session)
+                return
+            if isinstance(parsed, CandidateAdd):
+                self._buffer_pending_candidate(parsed)  # session not created yet
+                return
+            return  # no such session and not a new request -> ignore
         await session.handle_signal(parsed)
+
+    def _buffer_pending_candidate(self, candidate: CandidateAdd) -> None:
+        buffer = self._pending_candidates.setdefault(candidate.connection_id, [])
+        if len(buffer) < _MAX_PENDING_CANDIDATES:
+            buffer.append(candidate)
+
+    async def _flush_pending_candidates(self, session: Session) -> None:
+        for candidate in self._pending_candidates.pop(session.connection_id, []):
+            await session.handle_signal(candidate)
 
     def _create_session(
         self, connection_id: int, remote_id: NetworkID, *, is_dialer: bool
