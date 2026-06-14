@@ -17,7 +17,7 @@ from collections.abc import Callable
 
 from nethernet.errors import ESendType
 
-FRAGMENT_SIZE = 262143  # 0x3FFFF (SPEC.md s6.3)
+FRAGMENT_SIZE = 0x3FFFF  # 262143 (SPEC.md s6.3)
 MAX_PACKET_SIZE = 0x3FBFF01  # max single reliable packet, i.e. <= 256 fragments
 
 
