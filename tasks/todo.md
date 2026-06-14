@@ -40,14 +40,13 @@ Phase 1 (3–6) may be parallelized.
   unreliable-multi drop; reassembly on `header==0`; FIFO peek/read; zero-length ignored.
   - [x] fixtures `1` / `FRAGMENT_SIZE` / `FRAGMENT_SIZE+1` / 3-fragment reassemble · headers
     count to 0 (12 tests)
-- [ ] **8. aiortc PeerConnection wrapper** (§6.1–6.2, §4) — 2 channels exact params; SDP
-  max-message-size munge; candidate↔CANDIDATEADD (prefix-exact); iceServers/RelayOnly;
-  `on("datachannel")` by label. *(L — split 8a channels/SDP, 8b candidate xlate+config if
-  needed.)*
-  - [ ] 2 in-process wrappers exchange app packets (incl. multi-fragment) via framing ·
-    channel chosen by exact label
+- [x] **8. aiortc PeerConnection wrapper** (§6.1–6.2, §4) — 2 channels exact params; SDP
+  max-message-size munge; candidate↔CANDIDATEADD (prefix-exact); iceServers/RelayOnly
+  (best-effort: aiortc has no relay-only transport policy); `on("datachannel")` by label.
+  - [x] 2 in-process wrappers exchange app packets (incl. 262144-byte multi-fragment) via
+    framing · channel chosen by exact label (7 tests)
 
-### ▣ Checkpoint C — in-process full WebRTC handshake + framed app traffic → review
+### ▣ Checkpoint C — in-process WebRTC handshake + framed app traffic (75 tests) ✓ → pushed
 
 ## Phase 3 — Session orchestration
 - [ ] **9. Dialer state machine** (§9.1) — offer→CONNECTREQUEST; CONNECTRESPONSE→setRemote+
