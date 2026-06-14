@@ -17,6 +17,7 @@ dependencies = [
 dev = [
     "pytest>=8",
     "pytest-asyncio>=0.24",
+    "pytest-xdist>=3",
     "ruff>=0.6",
 ]
 
@@ -31,6 +32,8 @@ packages = ["src/nethernet"]
 # aiortc is asyncio-based; auto mode lets async test functions run without per-test markers.
 asyncio_mode = "auto"
 testpaths = ["tests"]
+# Run in parallel (pytest-xdist): the aiortc handshake tests are I/O-bound, so this is a big win.
+addopts = "-n auto"
 
 [tool.ruff]
 line-length = 100
