@@ -1,6 +1,7 @@
 """Stable enums shared across the protocol — SPEC.md s4.
 
-Member names use PEP8 ``UPPER_SNAKE_CASE``; the trailing comment on each is the spec's name so
+Class names drop the C++ ``E`` prefix SPEC.md uses (``ESessionError`` -> ``SessionError``) per
+PEP8. Member names use ``UPPER_SNAKE_CASE``; the trailing comment on each is the spec's name so
 the wire-critical numeric values stay easy to audit against SPEC.md s4.
 """
 
@@ -9,7 +10,7 @@ from __future__ import annotations
 from enum import IntEnum, IntFlag
 
 
-class ESessionError(IntEnum):
+class SessionError(IntEnum):
     """Session error carried in CONNECTERROR and surfaced on session close (SPEC.md s4)."""
 
     NONE = 0  # None
@@ -50,14 +51,14 @@ class ESessionError(IntEnum):
     GENERIC_FAILURE = 35  # GenericFailure
 
 
-class ESendType(IntEnum):
+class SendType(IntEnum):
     """Application send reliability (SPEC.md s4 / s6.2)."""
 
     UNRELIABLE = 0  # Unreliable
     RELIABLE = 1  # Reliable
 
 
-class EConnectionFlags(IntFlag):
+class ConnectionFlags(IntFlag):
     """ICE candidate-filtering flags (SPEC.md s4). ``RELAY_ONLY`` forces relay-only ICE."""
 
     NONE = 0  # None
@@ -76,7 +77,7 @@ class NetherNetError(Exception):
 class ConnectionFailed(NetherNetError):  # noqa: N818 - websockets-style name (no Error suffix)
     """``connect()`` never reached the CONNECTED state (negotiation timeout / ICE failure)."""
 
-    def __init__(self, error: ESessionError) -> None:
+    def __init__(self, error: SessionError) -> None:
         self.error = error
         super().__init__(f"connection failed: {error.name} ({int(error)})")
 
@@ -84,6 +85,6 @@ class ConnectionFailed(NetherNetError):  # noqa: N818 - websockets-style name (n
 class ConnectionClosed(NetherNetError):  # noqa: N818 - websockets-style name (no Error suffix)
     """``send()``/``recv()`` on a closed connection; ``error == NONE`` for a clean close."""
 
-    def __init__(self, error: ESessionError = ESessionError.NONE) -> None:
+    def __init__(self, error: SessionError = SessionError.NONE) -> None:
         self.error = error
         super().__init__(f"connection closed: {error.name} ({int(error)})")

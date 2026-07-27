@@ -12,13 +12,13 @@ import asyncio
 import secrets
 
 import nethernet
-from nethernet import ESendType, NetworkID
+from nethernet import NetworkID, SendType
 
 
 async def handle(connection: nethernet.Connection) -> None:
     print(f"connected: {connection.remote_id}")
     async for packet in connection:
-        await connection.send(packet, ESendType.RELIABLE)
+        await connection.send(packet, SendType.RELIABLE)
     print(f"disconnected: {connection.remote_id}")
 
 

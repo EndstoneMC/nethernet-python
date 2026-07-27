@@ -12,7 +12,7 @@ import argparse
 import asyncio
 
 import nethernet
-from nethernet import ESendType, ServerIdentity
+from nethernet import SendType, ServerIdentity
 
 
 def check_identity(identity: ServerIdentity) -> None:
@@ -24,7 +24,7 @@ async def main(url: str) -> None:
     async with connection:
         print("connected")
         for line in ("hello", "nethernet", "goodbye"):
-            await connection.send(line.encode(), ESendType.RELIABLE)
+            await connection.send(line.encode(), SendType.RELIABLE)
             reply = await asyncio.wait_for(connection.recv(), timeout=5)
             print(f"echoed: {reply.decode()}")
 

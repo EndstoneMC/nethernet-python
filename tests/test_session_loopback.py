@@ -7,7 +7,7 @@ reliable multi-fragment packet).
 
 import asyncio
 
-from nethernet.errors import ESendType
+from nethernet.errors import SendType
 from nethernet.network_id import NetworkID
 from nethernet.session import SessionState
 from nethernet.session_manager import SessionManager
@@ -86,16 +86,16 @@ async def test_full_handshake_and_bidirectional_traffic():
         listener_session = listener_opened[0]
 
         # Reliable single-fragment, dialer -> listener.
-        session.send(b"hello", ESendType.RELIABLE)
+        session.send(b"hello", SendType.RELIABLE)
         await wait_for(lambda: listener_recv == [b"hello"])
 
         # Unreliable single-fragment, listener -> dialer.
-        listener_session.send(b"pong", ESendType.UNRELIABLE)
+        listener_session.send(b"pong", SendType.UNRELIABLE)
         await wait_for(lambda: dialer_recv == [b"pong"])
 
         # Reliable multi-fragment (262144 bytes), dialer -> listener.
         big = bytes(i % 256 for i in range(FRAGMENT_SIZE + 1))
-        session.send(big, ESendType.RELIABLE)
+        session.send(big, SendType.RELIABLE)
         await wait_for(lambda: len(listener_recv) == 2)
         assert listener_recv[1] == big
     finally:

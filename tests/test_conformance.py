@@ -12,7 +12,7 @@ import pytest
 from nethernet.discovery.crypto import Envelope
 from nethernet.discovery.packets import DiscoveryMessage, DiscoveryRequest, DiscoveryResponse
 from nethernet.discovery.packets import parse as parse_discovery
-from nethernet.errors import ESendType, ESessionError
+from nethernet.errors import SendType, SessionError
 from nethernet.signaling.messages import (
     CandidateAdd,
     ConnectError,
@@ -36,7 +36,7 @@ def test_signaling_serialization_is_byte_exact():
     assert ConnectRequest(4242, sdp).serialize() == f"CONNECTREQUEST 4242 {sdp}"
     assert ConnectResponse(1, sdp).serialize() == f"CONNECTRESPONSE 1 {sdp}"
     assert CandidateAdd(7, "candidate:x").serialize() == "CANDIDATEADD 7 candidate:x"
-    assert ConnectError(7, ESessionError.ICE).serialize() == "CONNECTERROR 7 5"
+    assert ConnectError(7, SessionError.ICE).serialize() == "CONNECTERROR 7 5"
 
 
 def test_signaling_roundtrips_reproduce_input():
@@ -45,7 +45,7 @@ def test_signaling_roundtrips_reproduce_input():
         ConnectRequest(4242, sdp),
         ConnectResponse(4242, sdp),
         CandidateAdd(4242, "candidate:1 1 udp 2130706431 10.0.0.5 5000 typ host"),
-        ConnectError(4242, ESessionError.NEGOTIATION_TIMEOUT),
+        ConnectError(4242, SessionError.NEGOTIATION_TIMEOUT),
     ):
         text = message.serialize()
         assert parse(text).serialize() == text
@@ -107,7 +107,7 @@ def test_fragmentation_fixture_reassembles_with_countdown_headers(size):
     q = PacketQueue(out.append, lambda _data: None)
     payload = bytes(i % 256 for i in range(size))
 
-    assert q.push(payload, ESendType.RELIABLE) is True
+    assert q.push(payload, SendType.RELIABLE) is True
 
     expected_fragments = (size - 1) // FRAGMENT_SIZE + 1
     assert len(out) == expected_fragments

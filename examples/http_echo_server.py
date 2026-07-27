@@ -12,14 +12,14 @@ import argparse
 import asyncio
 
 import nethernet
-from nethernet import ESendType, IdentitySigner, generate_operator_key
+from nethernet import IdentitySigner, SendType, generate_operator_key
 from nethernet.identity import cpk_digest
 
 
 async def handle(connection: nethernet.Connection) -> None:
     print(f"connected: {connection.remote_id}")
     async for packet in connection:
-        await connection.send(packet, ESendType.RELIABLE)
+        await connection.send(packet, SendType.RELIABLE)
     print(f"disconnected: {connection.remote_id}")
 
 

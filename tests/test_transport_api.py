@@ -5,8 +5,8 @@ import asyncio
 import pytest
 
 from nethernet import (
-    ESendType,
     NetworkID,
+    SendType,
     SessionState,
 )
 from nethernet.constants import (
@@ -72,10 +72,10 @@ async def test_end_to_end_session_over_lan_udp():
         session = await client.connect(host_id)
         await wait_for(lambda: session.state is SessionState.CONNECTED and len(host_sessions) == 1)
 
-        session.send(b"hi host", ESendType.RELIABLE)
+        session.send(b"hi host", SendType.RELIABLE)
         await wait_for(lambda: host_recv == [b"hi host"])
 
-        host_sessions[0].send(b"hi client", ESendType.UNRELIABLE)
+        host_sessions[0].send(b"hi client", SendType.UNRELIABLE)
         await wait_for(lambda: client_recv == [b"hi client"])
     finally:
         await client.aclose()

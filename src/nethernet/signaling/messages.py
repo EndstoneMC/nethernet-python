@@ -13,7 +13,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import TypeAlias
 
-from nethernet.errors import ESessionError
+from nethernet.errors import SessionError
 from nethernet.network_id import U64_MAX
 
 
@@ -55,11 +55,11 @@ class CandidateAdd:
 
 @dataclass(frozen=True)
 class ConnectError:
-    """Either direction: an ``ESessionError`` as decimal ASCII (SPEC.md s5.3)."""
+    """Either direction: an ``SessionError`` as decimal ASCII (SPEC.md s5.3)."""
 
     IDENTIFIER = "CONNECTERROR"
     connection_id: int
-    error: int  # an ESessionError when known; kept as int to tolerate unknown future codes
+    error: int  # a SessionError when known; kept as int to tolerate unknown future codes
 
     def serialize(self) -> str:
         return f"{self.IDENTIFIER} {self.connection_id} {int(self.error)}"
@@ -114,7 +114,7 @@ def parse(message: str) -> SignalingMessage | None:
         if error is None:
             return None
         try:
-            error = ESessionError(error)
+            error = SessionError(error)
         except ValueError:
             pass  # tolerate codes outside the known enum
         return ConnectError(connection_id, error)

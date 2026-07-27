@@ -147,13 +147,13 @@ class Connection:
     async def __aenter__(self) -> "Connection"
     async def __aexit__(self, *exc) -> None                       # close()
 
-    async def send(self, data: bytes, reliability: ESendType = ESendType.RELIABLE) -> None
+    async def send(self, data: bytes, reliability: SendType = SendType.RELIABLE) -> None
     async def recv(self) -> bytes                                 # next complete packet (§6.4)
     def __aiter__(self) -> AsyncIterator[bytes]                   # async for packet in connection
     async def __anext__(self) -> bytes
 
-    async def close(self, error: ESessionError = ESessionError.NONE) -> None
-    async def wait_closed(self) -> ESessionError
+    async def close(self, error: SessionError = SessionError.NONE) -> None
+    async def wait_closed(self) -> SessionError
 ```
 
 Semantics:
@@ -191,18 +191,18 @@ class DiscoveredHost:
 
 ```python
 class NetherNetError(Exception): ...
-class ConnectionFailed(NetherNetError): error: ESessionError   # connect() never reached CONNECTED
-class ConnectionClosed(NetherNetError): error: ESessionError   # send()/recv() on a closed connection
+class ConnectionFailed(NetherNetError): error: SessionError   # connect() never reached CONNECTED
+class ConnectionClosed(NetherNetError): error: SessionError   # send()/recv() on a closed connection
 ```
 
-`error` carries the `ESessionError` (§4): timeout 14/15, ICE 5, DataChannelClosed 32, ….
+`error` carries the `SessionError` (§4): timeout 14/15, ICE 5, DataChannelClosed 32, ….
 (`ConnectionClosed` mirrors the `websockets` exception of the same name; a clean close carries
-`ESessionError.NONE`.)
+`SessionError.NONE`.)
 
 ### 3.6 Re-exported as-is
 
-`NetworkID`, `NetworkIDType`, `SessionState`, `ESendType`, `ESessionError`,
-`EConnectionFlags`, `new_connection_id`, `Address`, `__version__`.
+`NetworkID`, `NetworkIDType`, `SessionState`, `SendType`, `SessionError`,
+`ConnectionFlags`, `new_connection_id`, `Address`, `__version__`.
 
 ---
 
@@ -211,12 +211,12 @@ class ConnectionClosed(NetherNetError): error: ESessionError   # send()/recv() o
 ```python
 # examples/echo_server.py
 import asyncio, secrets, nethernet
-from nethernet import NetworkID, ESendType
+from nethernet import NetworkID, SendType
 
 async def handler(conn):                         # called once per incoming connection
     async with conn:
         async for packet in conn:                # echo
-            await conn.send(packet, ESendType.RELIABLE)
+            await conn.send(packet, SendType.RELIABLE)
 
 async def main():
     local_id = NetworkID.p2p(secrets.randbits(64))
@@ -230,13 +230,13 @@ asyncio.run(main())
 ```python
 # examples/echo_client.py
 import asyncio, nethernet
-from nethernet import ESendType
+from nethernet import SendType
 
 async def main():
     async for host in nethernet.discover(timeout=3):
         print("found", host.network_id, host.advertisement)
         async with await nethernet.connect(host) as conn:
-            await conn.send(b"hello", ESendType.RELIABLE)
+            await conn.send(b"hello", SendType.RELIABLE)
             print("reply:", await conn.recv())
         break
 
@@ -245,7 +245,7 @@ asyncio.run(main())
 
 Compare `websockets` (`serve(handler, …)` + `await server.serve_forever()`;
 `async with connect(uri) as ws: await ws.send(...); await ws.recv()`): the shapes are
-intentionally identical; NetherNet adds the `ESendType` reliability arg and LAN `discover()`,
+intentionally identical; NetherNet adds the `SendType` reliability arg and LAN `discover()`,
 and uses one `Connection` class for both ends.
 
 ---
@@ -290,6 +290,9 @@ Engine modules (`session_manager.py`, `transport/`, `discovery/`, codecs) are no
 - `from __future__ import annotations`; full type hints; keyword-only configuration args.
 - PEP8 naming, `UPPER_SNAKE_CASE` enum members; **ruff clean** (enforced). (Note: we deliberately
   do *not* mirror BDS/aiortc camelCase — `sendPacket` → `send`, `getSessionState` → `state`.)
+- Enum classes drop the C++ `E` prefix `SPEC.md` carries: `ESessionError` → `SessionError`,
+  `ESendType` → `SendType`, `EConnectionFlags` → `ConnectionFlags`. `SPEC.md` keeps the original
+  names, since it documents the C++ protocol.
 - Resource-closing coroutines named `close`/`aclose`; objects provide `__aenter__`/`__aexit__`.
 - Docstrings cite the governing `SPEC.md` section for wire-observable behavior, and name the
   BDS analog where it clarifies intent (e.g. "== WebRTCNetworkPeer::sendPacket").

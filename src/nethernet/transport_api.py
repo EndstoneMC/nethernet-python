@@ -19,7 +19,7 @@ from nethernet.constants import (
     DEFAULT_NEGOTIATION_TIMEOUT,
 )
 from nethernet.discovery.lan import Address, LanTransport
-from nethernet.errors import ESessionError
+from nethernet.errors import SessionError
 from nethernet.network_id import NetworkID, NetworkIDType
 from nethernet.session import Session
 from nethernet.session_manager import SessionManager
@@ -43,7 +43,7 @@ class Transport:
         relay_only: bool = False,
         advertisement: bytes | None = None,
         on_session: Callable[[Session], None] | None = None,
-        on_session_close: Callable[[Session, ESessionError], None] | None = None,
+        on_session_close: Callable[[Session, SessionError], None] | None = None,
         on_packet: Callable[[Session, bytes], None] | None = None,
         on_host_discovered: Callable[[NetworkID, bytes, Address], None] | None = None,
     ) -> None:

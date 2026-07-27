@@ -27,8 +27,8 @@ from nethernet.discovery.lan import Address
 from nethernet.errors import (
     ConnectionClosed,
     ConnectionFailed,
-    ESendType,
-    ESessionError,
+    SendType,
+    SessionError,
 )
 from nethernet.identity import (
     IdentityEnvelope,
@@ -79,7 +79,7 @@ class Connection:
         self._recv_queue: asyncio.Queue[bytes | _Closed] = asyncio.Queue()
         self._connected: asyncio.Future[None] = asyncio.get_event_loop().create_future()
         self._closed = asyncio.Event()
-        self._closed_error: ESessionError | None = None
+        self._closed_error: SessionError | None = None
 
     # -- identity (SPEC.md s3, s9) -----------------------------------------------------
 
@@ -101,10 +101,10 @@ class Connection:
 
     # -- message I/O (SPEC.md s6.2-s6.3) -----------------------------------------------
 
-    async def send(self, data: bytes, reliability: ESendType = ESendType.RELIABLE) -> None:
+    async def send(self, data: bytes, reliability: SendType = SendType.RELIABLE) -> None:
         """Send an application packet; raises :class:`ConnectionClosed` if not connected."""
         if self._session.state is not SessionState.CONNECTED:
-            raise ConnectionClosed(self._closed_error or ESessionError.NONE)
+            raise ConnectionClosed(self._closed_error or SessionError.NONE)
         self._session.send(data, reliability)
 
     async def recv(self) -> bytes:
@@ -115,7 +115,7 @@ class Connection:
         item = await self._recv_queue.get()
         if isinstance(item, _Closed):
             self._recv_queue.put_nowait(_CLOSED)  # sticky: subsequent recv() also raises
-            raise ConnectionClosed(self._closed_error or ESessionError.NONE)
+            raise ConnectionClosed(self._closed_error or SessionError.NONE)
         return item
 
     def __aiter__(self) -> AsyncIterator[bytes]:
@@ -125,20 +125,20 @@ class Connection:
         try:
             return await self.recv()
         except ConnectionClosed as exc:
-            if exc.error == ESessionError.NONE:
+            if exc.error == SessionError.NONE:
                 raise StopAsyncIteration from None
             raise
 
     # -- lifecycle (SPEC.md s9.5) ------------------------------------------------------
 
-    async def close(self, error: ESessionError = ESessionError.NONE) -> None:
+    async def close(self, error: SessionError = SessionError.NONE) -> None:
         await self._session.aclose(error)
         if self._owns_endpoint:
             await self._endpoint.aclose()
 
-    async def wait_closed(self) -> ESessionError:
+    async def wait_closed(self) -> SessionError:
         await self._closed.wait()
-        return self._closed_error or ESessionError.NONE
+        return self._closed_error or SessionError.NONE
 
     async def __aenter__(self) -> Connection:
         return self
@@ -152,7 +152,7 @@ class Connection:
         if not self._connected.done():
             self._connected.set_result(None)
 
-    def _mark_closed(self, error: ESessionError) -> None:
+    def _mark_closed(self, error: SessionError) -> None:
         self._closed_error = error
         if not self._connected.done():
             self._connected.set_exception(ConnectionFailed(error))
@@ -170,7 +170,7 @@ class Connection:
             await asyncio.wait_for(self._connected, timeout)
         except TimeoutError:
             raise ConnectionFailed(
-                ESessionError.NEGOTIATION_TIMEOUT_WAITING_FOR_RESPONSE
+                SessionError.NEGOTIATION_TIMEOUT_WAITING_FOR_RESPONSE
             ) from None
 
 
@@ -246,7 +246,7 @@ class _Endpoint:
             self._incoming.put_nowait(conn)
         conn._mark_connected()
 
-    def _on_session_close(self, session: Session, error: ESessionError) -> None:
+    def _on_session_close(self, session: Session, error: SessionError) -> None:
         conn = self._conns.pop(session.connection_id, None)
         if conn is not None:
             conn._mark_closed(error)
@@ -482,7 +482,7 @@ def _make_http_session(
     remote_id: NetworkID,
     is_dialer: bool,
     on_open: Callable[[Connection], None],
-    on_close: Callable[[Connection, ESessionError], None],
+    on_close: Callable[[Connection, SessionError], None],
     ice_servers: list | None,
     relay_only: bool,
     negotiation_timeout: float,
@@ -560,7 +560,7 @@ async def connect_http(
         await conn._await_connected(timeout)
         return conn
     except BaseException:
-        await session.aclose(ESessionError.GENERIC_FAILURE)
+        await session.aclose(SessionError.GENERIC_FAILURE)
         raise
 
 
@@ -629,7 +629,7 @@ class HttpServer:
             answer_sdp = await conn._session.answer(offer_sdp)
         except BaseException:
             self._conns.pop(conn.connection_id, None)
-            await conn._session.aclose(ESessionError.FAILED_TO_CREATE_ANSWER)
+            await conn._session.aclose(SessionError.FAILED_TO_CREATE_ANSWER)
             raise
         if self._identity_signer is not None:
             answer_sdp = self._identity_signer.sign(answer_sdp)
@@ -641,7 +641,7 @@ class HttpServer:
         self._handler_tasks.add(task)
         task.add_done_callback(self._handler_tasks.discard)
 
-    def _handle_close(self, conn: Connection, error: ESessionError) -> None:
+    def _handle_close(self, conn: Connection, error: SessionError) -> None:
         self._conns.pop(conn.connection_id, None)
         conn._mark_closed(error)
 

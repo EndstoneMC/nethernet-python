@@ -4,7 +4,7 @@ The PacketQueue is exercised without aiortc: outbound fragments are captured via
 callbacks, and inbound fragments are fed back through on_*_message().
 """
 
-from nethernet.errors import ESendType
+from nethernet.errors import SendType
 from nethernet.transport.framing import FRAGMENT_SIZE, MAX_PACKET_SIZE, PacketQueue
 
 
@@ -20,14 +20,14 @@ def make_queue():
 
 def test_single_byte_packet_is_one_fragment_header_zero():
     q, rel, _ = make_queue()
-    assert q.push(b"A", ESendType.RELIABLE) is True
+    assert q.push(b"A", SendType.RELIABLE) is True
     assert rel == [b"\x00A"]
 
 
 def test_exactly_fragment_size_is_a_single_fragment():
     q, rel, _ = make_queue()
     payload = bytes(FRAGMENT_SIZE)
-    assert q.push(payload, ESendType.RELIABLE) is True
+    assert q.push(payload, SendType.RELIABLE) is True
     assert len(rel) == 1
     assert rel[0][0] == 0
     assert len(rel[0]) == FRAGMENT_SIZE + 1
@@ -35,7 +35,7 @@ def test_exactly_fragment_size_is_a_single_fragment():
 
 def test_empty_packet_sends_header_only_and_delivers_empty():
     q, rel, _ = make_queue()
-    assert q.push(b"", ESendType.RELIABLE) is True
+    assert q.push(b"", SendType.RELIABLE) is True
     assert rel == [b"\x00"]
     q.on_reliable_message(rel[0])
     assert q.read() == b""
@@ -43,7 +43,7 @@ def test_empty_packet_sends_header_only_and_delivers_empty():
 
 def test_unreliable_single_fragment_uses_unreliable_channel():
     q, rel, unrel = make_queue()
-    assert q.push(b"hi", ESendType.UNRELIABLE) is True
+    assert q.push(b"hi", SendType.UNRELIABLE) is True
     assert rel == []
     assert unrel == [b"\x00hi"]
 
@@ -54,7 +54,7 @@ def test_unreliable_single_fragment_uses_unreliable_channel():
 def test_fragment_size_plus_one_splits_into_two_with_countdown():
     q, rel, _ = make_queue()
     payload = bytes(i % 256 for i in range(FRAGMENT_SIZE + 1))  # 262144
-    assert q.push(payload, ESendType.RELIABLE) is True
+    assert q.push(payload, SendType.RELIABLE) is True
     assert len(rel) == 2
     assert rel[0][0] == 1 and len(rel[0]) == 1 + FRAGMENT_SIZE
     assert rel[1][0] == 0 and len(rel[1]) == 1 + 1
@@ -68,7 +68,7 @@ def test_three_fragment_reassembly_headers_count_down_to_zero():
     payload = bytes((i * 7) % 256 for i in range(FRAGMENT_SIZE * 2 + 5))
     n = len(payload)
     expected = (n - 1) // FRAGMENT_SIZE + 1
-    assert q.push(payload, ESendType.RELIABLE) is True
+    assert q.push(payload, SendType.RELIABLE) is True
     assert len(rel) == expected
     assert [f[0] for f in rel] == list(range(expected - 1, -1, -1))  # [2, 1, 0]
     for frag in rel:
@@ -79,7 +79,7 @@ def test_three_fragment_reassembly_headers_count_down_to_zero():
 def test_reassembly_delivers_nothing_until_final_fragment():
     q, rel, _ = make_queue()
     payload = bytes(FRAGMENT_SIZE + 1)
-    q.push(payload, ESendType.RELIABLE)
+    q.push(payload, SendType.RELIABLE)
     q.on_reliable_message(rel[0])
     assert q.peek() is None  # header != 0 -> still reassembling
     q.on_reliable_message(rel[1])
@@ -91,13 +91,13 @@ def test_reassembly_delivers_nothing_until_final_fragment():
 
 def test_oversize_packet_is_dropped():
     q, rel, unrel = make_queue()
-    assert q.push(bytes(MAX_PACKET_SIZE + 1), ESendType.RELIABLE) is False
+    assert q.push(bytes(MAX_PACKET_SIZE + 1), SendType.RELIABLE) is False
     assert rel == [] and unrel == []
 
 
 def test_unreliable_multifragment_is_dropped():
     q, rel, unrel = make_queue()
-    assert q.push(bytes(FRAGMENT_SIZE + 1), ESendType.UNRELIABLE) is False
+    assert q.push(bytes(FRAGMENT_SIZE + 1), SendType.UNRELIABLE) is False
     assert rel == [] and unrel == []
 
 

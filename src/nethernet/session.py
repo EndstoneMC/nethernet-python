@@ -16,7 +16,7 @@ from collections.abc import Callable
 from enum import Enum, auto
 
 from nethernet.constants import DEFAULT_NEGOTIATION_TIMEOUT
-from nethernet.errors import ESendType, ESessionError
+from nethernet.errors import SendType, SessionError
 from nethernet.network_id import NetworkID
 from nethernet.signaling.messages import (
     CandidateAdd,
@@ -49,7 +49,7 @@ class Session:
         is_dialer: bool,
         send_signal: Callable[[str], None],
         on_open: Callable[[Session], None] | None = None,
-        on_close: Callable[[Session, ESessionError], None] | None = None,
+        on_close: Callable[[Session, SessionError], None] | None = None,
         on_packet: Callable[[Session, bytes], None] | None = None,
         ice_servers: list | None = None,
         relay_only: bool = False,
@@ -87,7 +87,7 @@ class Session:
         self.state = SessionState.OFFER_SENT
         self._send_signal(ConnectRequest(self.connection_id, offer).serialize())
         self._send_candidates(candidates)
-        self._arm_timeout(ESessionError.NEGOTIATION_TIMEOUT_WAITING_FOR_RESPONSE)
+        self._arm_timeout(SessionError.NEGOTIATION_TIMEOUT_WAITING_FOR_RESPONSE)
 
     # -- full-ICE entry points (out-of-band signaling, e.g. HTTP POST /v1/join) ---------
 
@@ -99,7 +99,7 @@ class Session:
         """
         sdp = await self._pc.create_offer()
         self.state = SessionState.OFFER_SENT
-        self._arm_timeout(ESessionError.NEGOTIATION_TIMEOUT_WAITING_FOR_RESPONSE)
+        self._arm_timeout(SessionError.NEGOTIATION_TIMEOUT_WAITING_FOR_RESPONSE)
         return sdp
 
     async def accept_answer(self, answer_sdp: str) -> None:
@@ -107,14 +107,14 @@ class Session:
         if self.state != SessionState.OFFER_SENT:
             return
         self.state = SessionState.NEGOTIATING
-        self._arm_timeout(ESessionError.NEGOTIATION_TIMEOUT_WAITING_FOR_ACCEPT)
+        self._arm_timeout(SessionError.NEGOTIATION_TIMEOUT_WAITING_FOR_ACCEPT)
         await self._pc.set_remote_answer(answer_sdp)
 
     async def answer(self, offer_sdp: str) -> str:
         """Listener: apply a full-ICE offer and return the full-ICE answer SDP."""
         sdp = await self._pc.create_answer(offer_sdp)
         self.state = SessionState.ANSWER_SENT
-        self._arm_timeout(ESessionError.NEGOTIATION_TIMEOUT_WAITING_FOR_ACCEPT)
+        self._arm_timeout(SessionError.NEGOTIATION_TIMEOUT_WAITING_FOR_ACCEPT)
         return sdp
 
     # -- inbound signaling -------------------------------------------------------------
@@ -137,7 +137,7 @@ class Session:
         if self.state != SessionState.OFFER_SENT:
             return
         self.state = SessionState.NEGOTIATING
-        self._arm_timeout(ESessionError.NEGOTIATION_TIMEOUT_WAITING_FOR_ACCEPT)
+        self._arm_timeout(SessionError.NEGOTIATION_TIMEOUT_WAITING_FOR_ACCEPT)
         await self._pc.set_remote_answer(message.sdp)
 
     async def _handle_request(self, message: ConnectRequest) -> None:
@@ -148,7 +148,7 @@ class Session:
         self.state = SessionState.ANSWER_SENT
         self._send_signal(ConnectResponse(self.connection_id, answer).serialize())
         self._send_candidates(candidates)
-        self._arm_timeout(ESessionError.NEGOTIATION_TIMEOUT_WAITING_FOR_ACCEPT)
+        self._arm_timeout(SessionError.NEGOTIATION_TIMEOUT_WAITING_FOR_ACCEPT)
 
     def _send_candidates(self, candidates: list[str]) -> None:
         for candidate in candidates:
@@ -159,7 +159,7 @@ class Session:
         # (listener) session; only outgoing (dialer) sessions act on it. All other errors close.
         if (
             not self.is_dialer
-            and message.error == ESessionError.SIGNALING_UNICAST_MESSAGE_DELIVERY_FAILED
+            and message.error == SessionError.SIGNALING_UNICAST_MESSAGE_DELIVERY_FAILED
         ):
             return
         self.close(message.error)
@@ -179,12 +179,12 @@ class Session:
             return
         if state == "failed":
             self.close(
-                ESessionError.DATA_CHANNEL_CLOSED
+                SessionError.DATA_CHANNEL_CLOSED
                 if self.state == SessionState.CONNECTED
-                else ESessionError.ICE
+                else SessionError.ICE
             )
         elif state == "closed" and self.state == SessionState.CONNECTED:
-            self.close(ESessionError.DATA_CHANNEL_CLOSED)
+            self.close(SessionError.DATA_CHANNEL_CLOSED)
 
     def _handle_packet(self, data: bytes) -> None:
         if self._on_packet is not None:
@@ -192,7 +192,7 @@ class Session:
 
     # -- application I/O ----------------------------------------------------------------
 
-    def send(self, data: bytes, send_type: ESendType) -> bool:
+    def send(self, data: bytes, send_type: SendType) -> bool:
         """Send an application packet; only valid once CONNECTED (SPEC.md s6.3)."""
         if self.state != SessionState.CONNECTED:
             return False
@@ -206,7 +206,7 @@ class Session:
 
     # -- timeouts & close --------------------------------------------------------------
 
-    def _arm_timeout(self, error: ESessionError) -> None:
+    def _arm_timeout(self, error: SessionError) -> None:
         self._cancel_timeout()
         loop = asyncio.get_running_loop()
         self._timeout_handle = loop.call_later(self._negotiation_timeout, self.close, error)
@@ -216,7 +216,7 @@ class Session:
             self._timeout_handle.cancel()
             self._timeout_handle = None
 
-    def close(self, error: ESessionError = ESessionError.NONE, notify_remote: bool = False) -> None:
+    def close(self, error: SessionError = SessionError.NONE, notify_remote: bool = False) -> None:
         """Tear down the session and notify the application (SPEC.md s9.5)."""
         if self.state == SessionState.CLOSED:
             return
@@ -228,7 +228,7 @@ class Session:
         if self._on_close is not None:
             self._on_close(self, error)
 
-    async def aclose(self, error: ESessionError = ESessionError.NONE) -> None:
+    async def aclose(self, error: SessionError = SessionError.NONE) -> None:
         """Close and await transport teardown (for tests / graceful shutdown)."""
         if self.state != SessionState.CLOSED:
             self.close(error)

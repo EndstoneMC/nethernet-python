@@ -9,7 +9,7 @@ from __future__ import annotations
 
 from collections.abc import Callable
 
-from nethernet.errors import ESessionError
+from nethernet.errors import SessionError
 from nethernet.network_id import NetworkID, new_connection_id
 from nethernet.session import DEFAULT_NEGOTIATION_TIMEOUT, Session
 from nethernet.signaling.messages import CandidateAdd, ConnectRequest, parse
@@ -27,7 +27,7 @@ class SessionManager:
         local_id: NetworkID,
         send_signal: Callable[[NetworkID, str], None],
         on_session_open: Callable[[Session], None] | None = None,
-        on_session_close: Callable[[Session, ESessionError], None] | None = None,
+        on_session_close: Callable[[Session, SessionError], None] | None = None,
         on_packet: Callable[[Session, bytes], None] | None = None,
         ice_servers: list | None = None,
         relay_only: bool = False,
@@ -106,7 +106,7 @@ class SessionManager:
         if self._on_session_open is not None:
             self._on_session_open(session)
 
-    def _handle_session_close(self, session: Session, error: ESessionError) -> None:
+    def _handle_session_close(self, session: Session, error: SessionError) -> None:
         self._sessions.pop(session.connection_id, None)
         if self._on_session_close is not None:
             self._on_session_close(session, error)

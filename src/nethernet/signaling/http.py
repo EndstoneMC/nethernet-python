@@ -21,7 +21,7 @@ except ImportError:  # pragma: no cover - exercised only without the http extra
     aiohttp = None
     web = None
 
-from nethernet.errors import ConnectionFailed, ESessionError, NetherNetError
+from nethernet.errors import ConnectionFailed, NetherNetError, SessionError
 
 SDP_CONTENT_TYPE = "application/sdp"
 
@@ -67,7 +67,7 @@ async def request_answer(
             except (aiohttp.ClientError, OSError):
                 supported = False
             if not supported:
-                raise ConnectionFailed(ESessionError.NO_SIGNALING_CHANNEL)
+                raise ConnectionFailed(SessionError.NO_SIGNALING_CHANNEL)
         try:
             async with http.post(
                 f"{base}/v1/join/{network_id}",
@@ -75,10 +75,10 @@ async def request_answer(
                 headers={"Content-Type": SDP_CONTENT_TYPE},
             ) as response:
                 if response.status // 100 != 2:
-                    raise ConnectionFailed(ESessionError.SIGNALING_FAILED_TO_SEND)
+                    raise ConnectionFailed(SessionError.SIGNALING_FAILED_TO_SEND)
                 return await response.text()
         except (aiohttp.ClientError, OSError):
-            raise ConnectionFailed(ESessionError.SIGNALING_FAILED_TO_SEND) from None
+            raise ConnectionFailed(SessionError.SIGNALING_FAILED_TO_SEND) from None
 
 
 class HttpSignalingServer:

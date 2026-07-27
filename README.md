@@ -53,11 +53,11 @@ Dedicated Server. The HTTP path additionally follows Mojang's
 
 ```python
 import asyncio, secrets, nethernet
-from nethernet import ESendType, NetworkID
+from nethernet import SendType, NetworkID
 
 async def handle(connection):
     async for packet in connection:         # iterates until the peer disconnects
-        await connection.send(packet, ESendType.RELIABLE)
+        await connection.send(packet, SendType.RELIABLE)
 
 async def main():
     local_id = NetworkID.p2p(secrets.randbits(64))
@@ -73,7 +73,7 @@ asyncio.run(main())
 async for host in nethernet.discover(timeout=3):
     print(host.network_id, host.advertisement)
     async with await nethernet.connect(host) as conn:
-        await conn.send(b"hello", ESendType.RELIABLE)
+        await conn.send(b"hello", SendType.RELIABLE)
         reply = await conn.recv()
     break
 ```
@@ -107,8 +107,8 @@ wire each packet carries a one-byte fragment header, which the library adds and 
 Reliability is per-call:
 
 ```python
-await conn.send(data, ESendType.RELIABLE)     # ordered, retransmitted
-await conn.send(data, ESendType.UNRELIABLE)   # unordered, may be lost
+await conn.send(data, SendType.RELIABLE)     # ordered, retransmitted
+await conn.send(data, SendType.UNRELIABLE)   # unordered, may be lost
 ```
 
 Reliable packets are fragmented as needed, up to about 64 MiB. Unreliable ones are never
@@ -141,7 +141,7 @@ Failures raise exceptions rather than returning sentinels. All inherit from `Net
 | `InvalidIdentity` | an `a=identity` assertion is missing, malformed, or fails verification |
 | `SignalingRejected` | raise it from `validate_offer` to refuse an offer |
 
-`.error` is an `ESessionError`, the same code Bedrock reports: negotiation timeouts, ICE
+`.error` is a `SessionError`, the same code Bedrock reports: negotiation timeouts, ICE
 failure, data-channel close.
 
 ## Development

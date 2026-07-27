@@ -15,7 +15,7 @@ from __future__ import annotations
 from collections import deque
 from collections.abc import Callable
 
-from nethernet.errors import ESendType
+from nethernet.errors import SendType
 
 FRAGMENT_SIZE = 0x3FFFF  # 262143 (SPEC.md s6.3)
 MAX_PACKET_SIZE = 0x3FBFF01  # max single reliable packet, i.e. <= 256 fragments
@@ -36,7 +36,7 @@ class PacketQueue:
 
     # -- sending -----------------------------------------------------------------------
 
-    def push(self, data: bytes, send_type: ESendType) -> bool:
+    def push(self, data: bytes, send_type: SendType) -> bool:
         """Fragment and send a packet. Returns False if it was dropped (SPEC.md s6.3)."""
         size = len(data)
         if size < FRAGMENT_SIZE + 1:
@@ -44,20 +44,20 @@ class PacketQueue:
             return True
         if size > MAX_PACKET_SIZE:
             return False  # too large
-        if send_type != ESendType.RELIABLE:
+        if send_type != SendType.RELIABLE:
             return False  # multi-fragment packets must not go on the unreliable channel
         fragments = (size - 1) // FRAGMENT_SIZE + 1
         offset = 0
         while fragments:
             fragments -= 1  # header counts down: fragments-1 ... 0
             chunk = data[offset : offset + FRAGMENT_SIZE]
-            self._send_fragment(fragments, chunk, ESendType.RELIABLE)
+            self._send_fragment(fragments, chunk, SendType.RELIABLE)
             offset += FRAGMENT_SIZE
         return True
 
-    def _send_fragment(self, header: int, payload: bytes, send_type: ESendType) -> None:
+    def _send_fragment(self, header: int, payload: bytes, send_type: SendType) -> None:
         fragment = bytes((header,)) + bytes(payload)
-        if send_type == ESendType.RELIABLE:
+        if send_type == SendType.RELIABLE:
             self._send_reliable(fragment)
         else:
             self._send_unreliable(fragment)

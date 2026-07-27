@@ -6,7 +6,7 @@ buffering) without completing ICE; the full dialer<->listener connect is in test
 
 import asyncio
 
-from nethernet.errors import ESendType, ESessionError
+from nethernet.errors import SendType, SessionError
 from nethernet.network_id import NetworkID
 from nethernet.session import Session, SessionState
 from nethernet.signaling.messages import CandidateAdd, ConnectError, ConnectRequest, parse
@@ -48,11 +48,11 @@ async def test_start_sends_connect_request_with_offer():
 
 async def test_connect_error_closes_with_that_error():
     sent: list[str] = []
-    closed: list[ESessionError] = []
+    closed: list[SessionError] = []
     s = make_dialer(sent, on_close=lambda _s, err: closed.append(err))
     await s.start()
-    await s.handle_signal(ConnectError(4242, ESessionError.NEGOTIATION_TIMEOUT))
-    assert closed == [ESessionError.NEGOTIATION_TIMEOUT]
+    await s.handle_signal(ConnectError(4242, SessionError.NEGOTIATION_TIMEOUT))
+    assert closed == [SessionError.NEGOTIATION_TIMEOUT]
     assert s.state == SessionState.CLOSED
     await s.aclose()
 
@@ -60,23 +60,23 @@ async def test_connect_error_closes_with_that_error():
 async def test_dialer_acts_on_unicast_delivery_failed_error():
     # SPEC.md s5.5: error 19 closes outgoing (dialer) sessions (only incoming sessions ignore it).
     sent: list[str] = []
-    closed: list[ESessionError] = []
+    closed: list[SessionError] = []
     s = make_dialer(sent, on_close=lambda _s, err: closed.append(err))
     await s.start()
     await s.handle_signal(
-        ConnectError(4242, ESessionError.SIGNALING_UNICAST_MESSAGE_DELIVERY_FAILED)
+        ConnectError(4242, SessionError.SIGNALING_UNICAST_MESSAGE_DELIVERY_FAILED)
     )
-    assert closed == [ESessionError.SIGNALING_UNICAST_MESSAGE_DELIVERY_FAILED]
+    assert closed == [SessionError.SIGNALING_UNICAST_MESSAGE_DELIVERY_FAILED]
     await s.aclose()
 
 
 async def test_timeout_waiting_for_response_closes_with_code_14():
     sent: list[str] = []
-    closed: list[ESessionError] = []
+    closed: list[SessionError] = []
     s = make_dialer(sent, on_close=lambda _s, err: closed.append(err), timeout=0.1)
     await s.start()
     await asyncio.sleep(0.25)
-    assert closed == [ESessionError.NEGOTIATION_TIMEOUT_WAITING_FOR_RESPONSE]
+    assert closed == [SessionError.NEGOTIATION_TIMEOUT_WAITING_FOR_RESPONSE]
     assert s.state == SessionState.CLOSED
     await s.aclose()
 
@@ -99,6 +99,6 @@ async def test_send_is_rejected_before_connected():
     s = make_dialer(sent)
     try:
         await s.start()
-        assert s.send(b"data", ESendType.RELIABLE) is False  # not CONNECTED yet
+        assert s.send(b"data", SendType.RELIABLE) is False  # not CONNECTED yet
     finally:
         await s.aclose()

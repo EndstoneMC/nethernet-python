@@ -28,10 +28,10 @@ from nethernet.discovery.lan import Address
 from nethernet.errors import (
     ConnectionClosed,
     ConnectionFailed,
-    EConnectionFlags,
-    ESendType,
-    ESessionError,
+    ConnectionFlags,
     NetherNetError,
+    SendType,
+    SessionError,
 )
 from nethernet.identity import (
     IdentityEnvelope,
@@ -73,9 +73,9 @@ __all__ = [
     "Address",
     # state / enums
     "SessionState",
-    "ESendType",
-    "ESessionError",
-    "EConnectionFlags",
+    "SendType",
+    "SessionError",
+    "ConnectionFlags",
     # exceptions
     "NetherNetError",
     "ConnectionFailed",

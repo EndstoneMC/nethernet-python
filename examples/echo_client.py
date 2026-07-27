@@ -10,7 +10,7 @@ import argparse
 import asyncio
 
 import nethernet
-from nethernet import ESendType
+from nethernet import SendType
 
 
 def transport_options(port: int, application_id: int, loopback: bool) -> dict:
@@ -41,7 +41,7 @@ async def main(port: int, application_id: int, timeout: float, loopback: bool) -
     async with connection:
         print(f"connected to {connection.remote_id}")
         for line in ("hello", "nethernet", "goodbye"):
-            await connection.send(line.encode(), ESendType.RELIABLE)
+            await connection.send(line.encode(), SendType.RELIABLE)
             reply = await asyncio.wait_for(connection.recv(), timeout=5)
             print(f"echoed: {reply.decode()}")
 

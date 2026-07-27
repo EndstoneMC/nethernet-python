@@ -2,7 +2,7 @@
 
 import asyncio
 
-from nethernet.errors import ESessionError
+from nethernet.errors import SessionError
 from nethernet.network_id import NetworkID
 from nethernet.session import Session, SessionState
 from nethernet.signaling.messages import (
@@ -59,10 +59,10 @@ async def test_request_produces_connect_response_answer():
 async def test_listener_ignores_unicast_delivery_failed_error():
     # SPEC.md s5.5: error 19 MUST NOT close an incoming (listener) session.
     sent: list[str] = []
-    closed: list[ESessionError] = []
+    closed: list[SessionError] = []
     s = make_listener(sent, on_close=lambda _s, err: closed.append(err))
     await s.handle_signal(
-        ConnectError(777, ESessionError.SIGNALING_UNICAST_MESSAGE_DELIVERY_FAILED)
+        ConnectError(777, SessionError.SIGNALING_UNICAST_MESSAGE_DELIVERY_FAILED)
     )
     assert closed == []
     assert s.state is not SessionState.CLOSED
@@ -71,22 +71,22 @@ async def test_listener_ignores_unicast_delivery_failed_error():
 
 async def test_listener_closes_on_other_error():
     sent: list[str] = []
-    closed: list[ESessionError] = []
+    closed: list[SessionError] = []
     s = make_listener(sent, on_close=lambda _s, err: closed.append(err))
-    await s.handle_signal(ConnectError(777, ESessionError.ICE))
-    assert closed == [ESessionError.ICE]
+    await s.handle_signal(ConnectError(777, SessionError.ICE))
+    assert closed == [SessionError.ICE]
     assert s.state is SessionState.CLOSED
     await s.aclose()
 
 
 async def test_listener_timeout_waiting_for_accept_closes_with_code_15():
     sent: list[str] = []
-    closed: list[ESessionError] = []
+    closed: list[SessionError] = []
     offer = await make_offer()
     s = make_listener(sent, on_close=lambda _s, err: closed.append(err), timeout=0.1)
     await s.handle_signal(ConnectRequest(777, offer))
     await asyncio.sleep(0.25)
-    assert closed == [ESessionError.NEGOTIATION_TIMEOUT_WAITING_FOR_ACCEPT]
+    assert closed == [SessionError.NEGOTIATION_TIMEOUT_WAITING_FOR_ACCEPT]
     await s.aclose()
 
 

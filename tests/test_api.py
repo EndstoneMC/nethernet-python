@@ -15,9 +15,9 @@ from nethernet.api import DiscoveredHost, connect, discover, serve
 from nethernet.errors import (
     ConnectionClosed,
     ConnectionFailed,
-    ESendType,
-    ESessionError,
     NetherNetError,
+    SendType,
+    SessionError,
 )
 from nethernet.network_id import NetworkID
 
@@ -65,9 +65,9 @@ def test_public_surface_is_exported_and_transport_is_internal():
         "NetworkIDType",
         "new_connection_id",
         "SessionState",
-        "ESendType",
-        "ESessionError",
-        "EConnectionFlags",
+        "SendType",
+        "SessionError",
+        "ConnectionFlags",
         "NetherNetError",
         "ConnectionFailed",
         "ConnectionClosed",
@@ -87,12 +87,12 @@ def test_exception_hierarchy_and_error_payload():
     assert issubclass(ConnectionFailed, NetherNetError)
     assert issubclass(ConnectionClosed, NetherNetError)
 
-    failed = ConnectionFailed(ESessionError.ICE)
-    assert failed.error is ESessionError.ICE
+    failed = ConnectionFailed(SessionError.ICE)
+    assert failed.error is SessionError.ICE
     assert "ICE" in str(failed)
 
-    closed = ConnectionClosed(ESessionError.NONE)
-    assert closed.error is ESessionError.NONE
+    closed = ConnectionClosed(SessionError.NONE)
+    assert closed.error is SessionError.NONE
 
 
 # --- connect() / serve() / Connection round trip (docs/api-design.md s3.1-s3.3) ---
@@ -105,7 +105,7 @@ async def test_serve_and_connect_round_trip():
     async def handler(conn):
         data = await conn.recv()
         received.append(data)
-        await conn.send(b"pong", ESendType.RELIABLE)
+        await conn.send(b"pong", SendType.RELIABLE)
         await conn.wait_closed()
 
     async with serve(
@@ -114,7 +114,7 @@ async def test_serve_and_connect_round_trip():
         host = DiscoveredHost(server_id, b"adv", (LOOPBACK, server.bound_port))
         async with await connect(host, bind_host=LOOPBACK, port=0) as conn:
             assert conn.remote_id == server_id
-            await conn.send(b"ping", ESendType.RELIABLE)
+            await conn.send(b"ping", SendType.RELIABLE)
             assert await conn.recv() == b"pong"
         assert received == [b"ping"]
 
@@ -129,8 +129,8 @@ async def test_connect_failure_raises_connection_failed():
             negotiation_timeout=1.0,
         )
     assert exc.value.error in (
-        ESessionError.NEGOTIATION_TIMEOUT_WAITING_FOR_RESPONSE,
-        ESessionError.NEGOTIATION_TIMEOUT_WAITING_FOR_ACCEPT,
+        SessionError.NEGOTIATION_TIMEOUT_WAITING_FOR_RESPONSE,
+        SessionError.NEGOTIATION_TIMEOUT_WAITING_FOR_ACCEPT,
     )
 
 
@@ -138,7 +138,7 @@ async def test_connect_explicit_timeout_raises_connection_failed():
     # The connect()-level `timeout` bounds the wait independently of negotiation_timeout.
     with pytest.raises(ConnectionFailed) as exc:
         await connect(NetworkID.p2p(998), bind_host=LOOPBACK, port=0, timeout=0.5)
-    assert exc.value.error is ESessionError.NEGOTIATION_TIMEOUT_WAITING_FOR_RESPONSE
+    assert exc.value.error is SessionError.NEGOTIATION_TIMEOUT_WAITING_FOR_RESPONSE
 
 
 async def test_recv_after_clean_close_raises_connection_closed():

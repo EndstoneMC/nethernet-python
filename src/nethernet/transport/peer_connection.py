@@ -32,7 +32,7 @@ from aiortc import (
 )
 from aiortc.sdp import candidate_from_sdp, candidate_to_sdp
 
-from nethernet.errors import ESendType
+from nethernet.errors import SendType
 from nethernet.transport.framing import PacketQueue
 
 RELIABLE_LABEL = "ReliableDataChannel"  # SPEC.md s6.2
@@ -194,7 +194,7 @@ class PeerConnection:
 
     # -- data channels -----------------------------------------------------------------
 
-    def send(self, data: bytes, send_type: ESendType) -> bool:
+    def send(self, data: bytes, send_type: SendType) -> bool:
         """Fragment and send an application packet; returns False if dropped (SPEC.md s6.3)."""
         return self._packets.push(data, send_type)
 

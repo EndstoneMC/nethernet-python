@@ -5,7 +5,7 @@ The connect-and-exchange test runs a real loopback ICE/DTLS/SCTP handshake (a *m
 
 import asyncio
 
-from nethernet.errors import ESendType
+from nethernet.errors import SendType
 from nethernet.transport.framing import FRAGMENT_SIZE
 from nethernet.transport.peer_connection import (
     MAX_MESSAGE_SIZE,
@@ -108,17 +108,17 @@ async def test_in_process_connect_and_exchange():
         )
 
         # Reliable single-fragment, dialer -> listener.
-        dialer.send(b"hello", ESendType.RELIABLE)
+        dialer.send(b"hello", SendType.RELIABLE)
         await wait_for(lambda: listener_recv == [b"hello"])
 
         # Reliable multi-fragment (262144 bytes) must reassemble intact (the reliable/ordered path).
         big = bytes(i % 256 for i in range(FRAGMENT_SIZE + 1))
-        dialer.send(big, ESendType.RELIABLE)
+        dialer.send(big, SendType.RELIABLE)
         await wait_for(lambda: len(listener_recv) == 2)
         assert listener_recv[1] == big
 
         # Unreliable single-fragment, listener -> dialer (selects the unreliable channel by label).
-        listener.send(b"pong", ESendType.UNRELIABLE)
+        listener.send(b"pong", SendType.UNRELIABLE)
         await wait_for(lambda: dialer_recv == [b"pong"])
     finally:
         await dialer.close()
