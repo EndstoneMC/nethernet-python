@@ -89,6 +89,34 @@ class Session:
         self._send_candidates(candidates)
         self._arm_timeout(ESessionError.NEGOTIATION_TIMEOUT_WAITING_FOR_RESPONSE)
 
+    # -- full-ICE entry points (out-of-band signaling, e.g. HTTP POST /v1/join) ---------
+
+    async def offer(self) -> str:
+        """Dialer: create the offer and return the full-ICE SDP (all candidates embedded).
+
+        The caller delivers it out of band (e.g. HTTP signaling) and feeds the remote answer
+        back via :meth:`accept_answer`. No signaling messages are sent.
+        """
+        sdp = await self._pc.create_offer()
+        self.state = SessionState.OFFER_SENT
+        self._arm_timeout(ESessionError.NEGOTIATION_TIMEOUT_WAITING_FOR_RESPONSE)
+        return sdp
+
+    async def accept_answer(self, answer_sdp: str) -> None:
+        """Dialer: apply a full-ICE answer received out of band."""
+        if self.state != SessionState.OFFER_SENT:
+            return
+        self.state = SessionState.NEGOTIATING
+        self._arm_timeout(ESessionError.NEGOTIATION_TIMEOUT_WAITING_FOR_ACCEPT)
+        await self._pc.set_remote_answer(answer_sdp)
+
+    async def answer(self, offer_sdp: str) -> str:
+        """Listener: apply a full-ICE offer and return the full-ICE answer SDP."""
+        sdp = await self._pc.create_answer(offer_sdp)
+        self.state = SessionState.ANSWER_SENT
+        self._arm_timeout(ESessionError.NEGOTIATION_TIMEOUT_WAITING_FOR_ACCEPT)
+        return sdp
+
     # -- inbound signaling -------------------------------------------------------------
 
     async def handle_signal(self, message: SignalingMessage) -> None:
@@ -205,4 +233,5 @@ class Session:
         if self.state != SessionState.CLOSED:
             self.close(error)
         if self._close_task is not None:
-            await self._close_task
+            # Shielded: cancelling a waiter must not leak into aiortc's own close future.
+            await asyncio.shield(self._close_task)

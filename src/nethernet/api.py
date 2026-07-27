@@ -13,6 +13,8 @@ packets. The byte-exact protocol code underneath is untouched.
 from __future__ import annotations
 
 import asyncio
+import inspect
+import ssl
 from collections.abc import AsyncIterator, Awaitable, Callable
 from dataclasses import dataclass
 
@@ -28,8 +30,17 @@ from nethernet.errors import (
     ESendType,
     ESessionError,
 )
+from nethernet.identity import (
+    IdentityEnvelope,
+    IdentitySigner,
+    ServerIdentity,
+    extract_identity,
+    strip_identity,
+    verify_server_identity,
+)
 from nethernet.network_id import NetworkID, new_connection_id
 from nethernet.session import Session, SessionState
+from nethernet.signaling.http import HttpSignalingServer, request_answer
 from nethernet.transport_api import Transport
 
 # Cap on packets buffered for an incoming connection before its Connection object exists (an app
@@ -54,10 +65,13 @@ _CLOSED = _Closed()
 
 
 class Connection:
-    """One connection to a peer (BDS ``WebRTCNetworkPeer``); a single class for both roles."""
+    """One connection to a peer (BDS ``WebRTCNetworkPeer``); a single class for both roles.
+
+    ``endpoint`` is None for HTTP-signaled connections, which have no LAN transport to own.
+    """
 
     def __init__(
-        self, session: Session, endpoint: _Endpoint, *, owns_endpoint: bool = False
+        self, session: Session, endpoint: _Endpoint | None, *, owns_endpoint: bool = False
     ) -> None:
         self._session = session
         self._endpoint = endpoint
@@ -142,6 +156,7 @@ class Connection:
         self._closed_error = error
         if not self._connected.done():
             self._connected.set_exception(ConnectionFailed(error))
+            self._connected.exception()  # mark retrieved; awaiting the future still raises
         self._recv_queue.put_nowait(_CLOSED)
         self._closed.set()
 
@@ -446,3 +461,265 @@ async def discover(
             yield host
     finally:
         await endpoint.aclose()
+
+
+# --- HTTP signaling (NetherNet Onboarding Guide s4) — connect_http() / serve_http() ---
+
+
+@dataclass(frozen=True)
+class IncomingOffer:
+    """An offer received over HTTP signaling, before any answer is generated."""
+
+    network_id_text: str  # raw URL path segment; treat as opaque (Guide s9)
+    network_id: NetworkID  # best-effort parsed form (may be unset)
+    sdp: str  # offer SDP with a=identity already stripped
+    identity: IdentityEnvelope | None  # client assertion; validating it is the app's policy
+
+
+def _make_http_session(
+    *,
+    local_id: NetworkID,
+    remote_id: NetworkID,
+    is_dialer: bool,
+    on_open: Callable[[Connection], None],
+    on_close: Callable[[Connection, ESessionError], None],
+    ice_servers: list | None,
+    relay_only: bool,
+    negotiation_timeout: float,
+) -> Connection:
+    """A Session/Connection pair with no LAN transport (full ICE: nothing to trickle)."""
+    slot: list[Connection] = []
+    session = Session(
+        connection_id=new_connection_id(),
+        local_id=local_id,
+        remote_id=remote_id,
+        is_dialer=is_dialer,
+        send_signal=lambda message: None,
+        on_open=lambda session: on_open(slot[0]),
+        on_close=lambda session, error: on_close(slot[0], error),
+        on_packet=lambda session, data: slot[0]._enqueue(data),
+        ice_servers=ice_servers,
+        relay_only=relay_only,
+        negotiation_timeout=negotiation_timeout,
+    )
+    conn = Connection(session, None)
+    slot.append(conn)
+    return conn
+
+
+async def connect_http(
+    server_url: str,
+    *,
+    local_id: NetworkID | None = None,
+    ice_servers: list | None = None,
+    relay_only: bool = False,
+    negotiation_timeout: float = DEFAULT_NEGOTIATION_TIMEOUT,
+    capability_check: bool = True,
+    on_server_identity: Callable[[ServerIdentity], Awaitable[None] | None] | None = None,
+    timeout: float | None = None,
+) -> Connection:
+    """Dial a host through HTTP signaling (Onboarding Guide s4, s7).
+
+    Full ICE: the complete offer goes in one ``POST {server_url}/v1/join/{local_id}`` and the
+    answer comes back in the response — no trickle, no LAN discovery. Requires the ``http``
+    extra (aiohttp).
+
+    ``on_server_identity`` receives the structurally verified server assertion (Guide s5.2);
+    trust policy — TLS vs TOFU pinning of ``key_digest`` — is the caller's, and raising from
+    the callback aborts the connection. Without it, any ``a=identity`` is stripped unverified.
+    """
+    local = local_id or NetworkID.p2p(new_connection_id())
+    conn = _make_http_session(
+        local_id=local,
+        remote_id=NetworkID.unset(),
+        is_dialer=True,
+        on_open=Connection._mark_connected,
+        on_close=Connection._mark_closed,
+        ice_servers=ice_servers,
+        relay_only=relay_only,
+        negotiation_timeout=negotiation_timeout,
+    )
+    session = conn._session
+    try:
+        offer_sdp = await session.offer()
+        answer_sdp = await request_answer(
+            server_url,
+            str(local),
+            offer_sdp,
+            capability_check=capability_check,
+            timeout=negotiation_timeout,
+        )
+        if on_server_identity is not None:
+            answer_sdp, server_identity = verify_server_identity(answer_sdp)
+            result = on_server_identity(server_identity)
+            if inspect.isawaitable(result):
+                await result
+        else:
+            answer_sdp = strip_identity(answer_sdp)
+        await session.accept_answer(answer_sdp)
+        await conn._await_connected(timeout)
+        return conn
+    except BaseException:
+        await session.aclose(ESessionError.GENERIC_FAILURE)
+        raise
+
+
+class HttpServer:
+    """Accepts connections via HTTP signaling; one ``handler`` task per connection.
+
+    The partner-flow analog of :class:`Server`: no LAN discovery or broadcast — clients learn
+    the signaling URL out of band (Guide s3).
+    """
+
+    def __init__(
+        self,
+        handler: Callable[[Connection], Awaitable[None]],
+        local_id: NetworkID,
+        *,
+        host: str,
+        port: int,
+        ssl_context: ssl.SSLContext | None,
+        identity_signer: IdentitySigner | None,
+        validate_offer: Callable[[IncomingOffer], Awaitable[None] | None] | None,
+        ice_servers: list | None,
+        relay_only: bool,
+        negotiation_timeout: float,
+    ) -> None:
+        self._handler = handler
+        self._local_id = local_id
+        self._identity_signer = identity_signer
+        self._validate_offer = validate_offer
+        self._ice_servers = ice_servers
+        self._relay_only = relay_only
+        self._negotiation_timeout = negotiation_timeout
+        self._signaling = HttpSignalingServer(
+            self._answer_offer, host=host, port=port, ssl_context=ssl_context
+        )
+        self._conns: dict[int, Connection] = {}
+        self._handler_tasks: set[asyncio.Task] = set()
+        self._closed = asyncio.Event()
+
+    async def start(self) -> HttpServer:
+        await self._signaling.start()
+        return self
+
+    # -- signaling callback ------------------------------------------------------------
+
+    async def _answer_offer(self, network_id_text: str, offer_sdp: str) -> str:
+        offer_sdp, envelope = extract_identity(offer_sdp)  # malformed -> InvalidIdentity -> 400
+        remote_id = NetworkID.parse(network_id_text)
+        if self._validate_offer is not None:
+            result = self._validate_offer(
+                IncomingOffer(network_id_text, remote_id, offer_sdp, envelope)
+            )
+            if inspect.isawaitable(result):
+                await result
+        conn = _make_http_session(
+            local_id=self._local_id,
+            remote_id=remote_id,
+            is_dialer=False,
+            on_open=self._handle_open,
+            on_close=self._handle_close,
+            ice_servers=self._ice_servers,
+            relay_only=self._relay_only,
+            negotiation_timeout=self._negotiation_timeout,
+        )
+        self._conns[conn.connection_id] = conn
+        try:
+            answer_sdp = await conn._session.answer(offer_sdp)
+        except BaseException:
+            self._conns.pop(conn.connection_id, None)
+            await conn._session.aclose(ESessionError.FAILED_TO_CREATE_ANSWER)
+            raise
+        if self._identity_signer is not None:
+            answer_sdp = self._identity_signer.sign(answer_sdp)
+        return answer_sdp
+
+    def _handle_open(self, conn: Connection) -> None:
+        conn._mark_connected()
+        task = asyncio.create_task(self._run_handler(conn))
+        self._handler_tasks.add(task)
+        task.add_done_callback(self._handler_tasks.discard)
+
+    def _handle_close(self, conn: Connection, error: ESessionError) -> None:
+        self._conns.pop(conn.connection_id, None)
+        conn._mark_closed(error)
+
+    async def _run_handler(self, conn: Connection) -> None:
+        try:
+            await self._handler(conn)
+        except ConnectionClosed:
+            pass  # remote disconnect is a normal end of a handler
+        finally:
+            await conn.close()
+
+    # -- lifecycle ---------------------------------------------------------------------
+
+    async def serve_forever(self) -> None:
+        await self._closed.wait()
+
+    async def aclose(self) -> None:
+        if self._closed.is_set():
+            return
+        self._closed.set()
+        await self._signaling.aclose()
+        # Close sessions first so handlers end via ConnectionClosed; then reap stragglers.
+        for conn in list(self._conns.values()):
+            await conn._session.aclose()
+        self._conns.clear()
+        for task in list(self._handler_tasks):
+            task.cancel()
+        await asyncio.gather(*self._handler_tasks, return_exceptions=True)
+
+    @property
+    def local_id(self) -> NetworkID:
+        return self._local_id
+
+    @property
+    def bound_port(self) -> int | None:
+        return self._signaling.bound_port
+
+    @property
+    def connections(self) -> list[Connection]:
+        return list(self._conns.values())
+
+    async def __aenter__(self) -> HttpServer:
+        return await self.start()
+
+    async def __aexit__(self, *exc: object) -> None:
+        await self.aclose()
+
+
+def serve_http(
+    handler: Callable[[Connection], Awaitable[None]],
+    local_id: NetworkID | None = None,
+    *,
+    host: str = "0.0.0.0",
+    port: int = 0,
+    ssl_context: ssl.SSLContext | None = None,
+    identity_signer: IdentitySigner | None = None,
+    validate_offer: Callable[[IncomingOffer], Awaitable[None] | None] | None = None,
+    ice_servers: list | None = None,
+    relay_only: bool = False,
+    negotiation_timeout: float = DEFAULT_NEGOTIATION_TIMEOUT,
+) -> HttpServer:
+    """Accept connections via HTTP signaling (Onboarding Guide s4). Requires ``nethernet[http]``.
+
+    ``handler(connection)`` is awaited once per connection in its own task. ``validate_offer``
+    is the authorization hook — it sees the raw network id, the stripped offer SDP, and the
+    client's identity envelope (validating the token is the application's policy); raise
+    :class:`~nethernet.signaling.http.SignalingRejected` to refuse. ``identity_signer`` adds
+    the server assertion that real Minecraft clients require on every answer (Guide s5.2).
+    """
+    return HttpServer(
+        handler,
+        local_id or NetworkID.p2p(new_connection_id()),
+        host=host,
+        port=port,
+        ssl_context=ssl_context,
+        identity_signer=identity_signer,
+        validate_offer=validate_offer,
+        ice_servers=ice_servers,
+        relay_only=relay_only,
+        negotiation_timeout=negotiation_timeout,
+    )

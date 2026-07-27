@@ -5,7 +5,16 @@ description = "Cleanroom Python implementation of Minecraft Bedrock's NetherNet 
 readme = "README.md"
 requires-python = ">=3.11"
 license = { text = "MIT" }
+license-files = ["LICENSE"]
 keywords = ["nethernet", "minecraft", "bedrock", "webrtc", "p2p", "lan", "aiortc"]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "License :: OSI Approved :: MIT License",
+    "Framework :: AsyncIO",
+    "Programming Language :: Python :: 3",
+    "Topic :: Games/Entertainment",
+    "Topic :: System :: Networking",
+]
 dependencies = [
     # WebRTC engine (ICE + DTLS + SCTP data channels). See SPEC.md s6.
     "aiortc>=1.9",
@@ -14,7 +23,10 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
+# HTTP signaling channel (Onboarding Guide s4): serve_http() / connect_http().
+http = ["aiohttp>=3.9"]
 dev = [
+    "aiohttp>=3.9",
     "pytest>=8",
     "pytest-asyncio>=0.24",
     "pytest-xdist>=3",
