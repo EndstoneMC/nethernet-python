@@ -34,11 +34,18 @@ def _load_example(name: str):
     return module
 
 
-def test_examples_import_and_expose_main():
-    server = _load_example("server.py")
-    client = _load_example("client.py")
-    assert callable(server.main)
-    assert callable(client.main)
+@pytest.mark.parametrize(
+    "name",
+    [
+        "echo_server.py",
+        "echo_client.py",
+        "http_echo_server.py",
+        "http_echo_client.py",
+        "discover_hosts.py",
+    ],
+)
+def test_examples_import_and_expose_main(name):
+    assert callable(_load_example(name).main)
 
 
 # --- Public surface (docs/api-design.md s3.6) ---

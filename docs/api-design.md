@@ -206,10 +206,10 @@ class ConnectionClosed(NetherNetError): error: ESessionError   # send()/recv() o
 
 ---
 
-## 4. Canonical usage — `examples/server.py` and `examples/client.py`
+## 4. Canonical usage — `examples/echo_server.py` and `examples/echo_client.py`
 
 ```python
-# examples/server.py
+# examples/echo_server.py
 import asyncio, secrets, nethernet
 from nethernet import NetworkID, ESendType
 
@@ -228,7 +228,7 @@ asyncio.run(main())
 ```
 
 ```python
-# examples/client.py
+# examples/echo_client.py
 import asyncio, nethernet
 from nethernet import ESendType
 
@@ -257,8 +257,8 @@ and uses one `Connection` class for both ends.
 | Run tests | `uv run pytest -q` |
 | Conformance subset | `uv run pytest -m conformance` |
 | Lint | `uv run ruff check` |
-| Server example | `uv run python examples/server.py` |
-| Client example | `uv run python examples/client.py` |
+| Server example | `uv run python examples/echo_server.py` |
+| Client example | `uv run python examples/echo_client.py` |
 
 ---
 
@@ -273,8 +273,8 @@ src/nethernet/
   __init__.py         # export connect/serve/discover, Connection, Server, DiscoveredHost, enums;
                       #   stop exporting Transport from the public surface
 examples/
-  server.py (new)     # replaces host.py — serve() + handler
-  client.py (new)     # replaces join.py — discover() + connect()
+  echo_server.py (new)  # replaces host.py — serve() + handler
+  echo_client.py (new)  # replaces join.py — discover() + connect()
 docs/api-design.md    # this document
 tests/test_api.py     # public-surface behavior tests (see §8)
 ```
@@ -313,7 +313,7 @@ Keep the existing **114 tests green** (engine unchanged). Add public-surface tes
 6. `connect(DiscoveredHost)` reuses the discovered address for signaling.
 7. `async with nethernet.serve(...)` / `async with connection` close cleanly on exception;
    `server.serve_forever()` returns on `aclose()`/cancel.
-8. `examples/server.py` + `examples/client.py` import-and-smoke; no poll loops remain.
+8. `examples/echo_server.py` + `examples/echo_client.py` import-and-smoke; no poll loops remain.
 
 Verification base: `uv run pytest -q` green + `uv run ruff check` clean.
 
