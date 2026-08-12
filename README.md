@@ -13,7 +13,7 @@ import nethernet
 
 async for host in nethernet.discover(timeout=3):
     async with await nethernet.connect(host) as conn:
-        await conn.send(b"\xfe...")        # a Bedrock game packet
+        await conn.send(b"\x06\xc1...")    # a Bedrock packet batch
         print(await conn.recv())
     break
 ```
@@ -113,6 +113,9 @@ await conn.send(data, SendType.UNRELIABLE)   # unordered, may be lost
 
 Reliable packets are fragmented as needed, up to about 64 MiB. Unreliable ones are never
 fragmented, so anything over 262143 bytes is dropped rather than sent.
+
+Carrying Bedrock itself is one packet batch per message: length-prefixed game packets, without
+the `0xFE` byte RakNet prefixes a batch with. A batch sent with that byte is silently ignored.
 
 ## Identity assertions
 
