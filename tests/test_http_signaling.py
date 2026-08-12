@@ -104,3 +104,41 @@ async def test_capability_check_fails_on_non_nethernet_server():
         assert info.value.error == SessionError.NO_SIGNALING_CHANNEL
     finally:
         await runner.cleanup()
+
+
+async def serve_join_body(body: str):
+    # A host that answers the capability check and returns `body` from POST /v1/join/{id}.
+    async def capability(request):
+        return web.Response()
+
+    async def join(request):
+        return web.Response(text=body, content_type="application/sdp")
+
+    app = web.Application()
+    app.router.add_get("/v1/join", capability)
+    app.router.add_post("/v1/join/{network_id}", join)
+    runner = web.AppRunner(app)
+    await runner.setup()
+    site = web.TCPSite(runner, "127.0.0.1", 0)
+    await site.start()
+    return runner, runner.addresses[0][1]
+
+
+@pytest.mark.parametrize(
+    ("body", "error"),
+    [
+        # BDS reports a refused offer as a bare ESessionError in a 200 application/sdp body.
+        ("37", SessionError.IDENTITY_NOT_ALLOWED),
+        ("36", SessionError.FAILED_TO_CREATE_IDENTITY_ASSERTION),
+        ("9999", SessionError.SIGNALING_UNKNOWN_ERROR),
+        ("not an sdp", SessionError.SIGNALING_PARSING_FAILURE),
+    ],
+)
+async def test_error_code_body_raises_the_hosts_session_error(body, error):
+    runner, port = await serve_join_body(body)
+    try:
+        with pytest.raises(ConnectionFailed) as info:
+            await nethernet.connect_http(f"http://127.0.0.1:{port}", timeout=30)
+        assert info.value.error == error
+    finally:
+        await runner.cleanup()

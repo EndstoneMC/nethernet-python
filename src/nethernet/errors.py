@@ -49,6 +49,8 @@ class SessionError(IntEnum):
     INTERNAL_ERROR_JSON_SERIALIZATION = 33  # InternalErrorJsonSerialization
     INVALID_ARGUMENT = 34  # InvalidArgument
     GENERIC_FAILURE = 35  # GenericFailure
+    FAILED_TO_CREATE_IDENTITY_ASSERTION = 36  # FailedToCreateIdentityAssertion
+    IDENTITY_NOT_ALLOWED = 37  # IdentityNotAllowed
 
 
 class SendType(IntEnum):

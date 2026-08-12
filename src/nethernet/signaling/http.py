@@ -42,6 +42,25 @@ def _require_aiohttp() -> None:
         raise NetherNetError("HTTP signaling requires aiohttp — install nethernet[http]")
 
 
+def _parse_answer(body: str) -> str:
+    """Return the answer SDP, or raise :class:`ConnectionFailed` if the body is an error code.
+
+    A rejecting host answers 200 ``application/sdp`` with a bare decimal ``ESessionError``
+    rather than an SDP body — BDS returns ``37`` (``IDENTITY_NOT_ALLOWED``) for an offer with
+    no ``a=identity`` assertion. An SDP answer always opens with the ``v=`` version line.
+    """
+    text = body.strip()
+    if text.startswith("v="):
+        return body
+    if text.isdigit():
+        try:
+            error = SessionError(int(text))
+        except ValueError:
+            error = SessionError.SIGNALING_UNKNOWN_ERROR
+        raise ConnectionFailed(error)
+    raise ConnectionFailed(SessionError.SIGNALING_PARSING_FAILURE)
+
+
 async def request_answer(
     server_url: str,
     network_id: str,
@@ -53,8 +72,9 @@ async def request_answer(
     """POST the offer to ``{server_url}/v1/join/{network_id}`` and return the answer SDP.
 
     Exactly one POST per attempt, no retries (Guide s4). Raises :class:`ConnectionFailed` with
-    ``NO_SIGNALING_CHANNEL`` if the capability check fails and ``SIGNALING_FAILED_TO_SEND`` on
-    a non-2xx or failed POST.
+    ``NO_SIGNALING_CHANNEL`` if the capability check fails, ``SIGNALING_FAILED_TO_SEND`` on
+    a non-2xx or failed POST, and the host's own :class:`SessionError` when the 2xx body is an
+    error code instead of an answer.
     """
     _require_aiohttp()
     base = server_url.rstrip("/")
@@ -76,7 +96,7 @@ async def request_answer(
             ) as response:
                 if response.status // 100 != 2:
                     raise ConnectionFailed(SessionError.SIGNALING_FAILED_TO_SEND)
-                return await response.text()
+                return _parse_answer(await response.text())
         except (aiohttp.ClientError, OSError):
             raise ConnectionFailed(SessionError.SIGNALING_FAILED_TO_SEND) from None
 
