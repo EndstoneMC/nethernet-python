@@ -516,6 +516,7 @@ async def connect_http(
     negotiation_timeout: float = DEFAULT_NEGOTIATION_TIMEOUT,
     capability_check: bool = True,
     on_server_identity: Callable[[ServerIdentity], Awaitable[None] | None] | None = None,
+    identity_signer: IdentitySigner | None = None,
     timeout: float | None = None,
 ) -> Connection:
     """Dial a host through HTTP signaling (Onboarding Guide s4, s7).
@@ -527,6 +528,7 @@ async def connect_http(
     ``on_server_identity`` receives the structurally verified server assertion (Guide s5.2);
     trust policy — TLS vs TOFU pinning of ``key_digest`` — is the caller's, and raising from
     the callback aborts the connection. Without it, any ``a=identity`` is stripped unverified.
+    ``identity_signer`` signs the offer; BDS rejects an offer without ``a=identity``.
     """
     local = local_id or NetworkID.p2p(new_connection_id())
     conn = _make_http_session(
@@ -542,6 +544,8 @@ async def connect_http(
     session = conn._session
     try:
         offer_sdp = await session.offer()
+        if identity_signer is not None:
+            offer_sdp = identity_signer.sign(offer_sdp)
         answer_sdp = await request_answer(
             server_url,
             str(local),
