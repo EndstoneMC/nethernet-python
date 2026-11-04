@@ -33,11 +33,14 @@ from aiortc import (
 from aiortc.sdp import candidate_from_sdp, candidate_to_sdp
 
 from nethernet.errors import SendType
+from nethernet.transport import stun_integrity
 from nethernet.transport.framing import PacketQueue
 
 RELIABLE_LABEL = "ReliableDataChannel"  # SPEC.md s6.2
 UNRELIABLE_LABEL = "UnreliableDataChannel"  # SPEC.md s6.2
 MAX_MESSAGE_SIZE = 262144  # SPEC.md s6.1
+
+stun_integrity.install()
 
 
 def set_max_message_size(sdp: str, value: int = MAX_MESSAGE_SIZE) -> str:
