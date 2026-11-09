@@ -42,6 +42,8 @@ def _is_authentic(data, key) -> bool:
 
 
 def install() -> None:
+    if hasattr(stun.Message, "check_message_integrity"):
+        return
     if ice.StunProtocol.request is not _request:
         ice.StunProtocol.request = _request
         ice.StunProtocol.datagram_received = _datagram_received
