@@ -5,8 +5,8 @@ the detached JWS over it, and the self-signed server JWT carrying ``cpk``. Polic
 a GameServerToken against the auth service, authorization decisions, TOFU pin storage — stays
 with the application.
 
-The ``cpk`` claim is serialized as base64 DER SubjectPublicKeyInfo (the guide leaves the format
-implementation-defined; this matches Minecraft's public-key convention).
+The ``cpk`` claim accepts public EC JWK objects and base64 DER SubjectPublicKeyInfo strings.
+The signer emits DER strings by default.
 
 cryptography API verified against the official reference:
 https://cryptography.io/en/latest/hazmat/primitives/asymmetric/ec/
@@ -41,6 +41,7 @@ _ALGORITHMS: dict[str, tuple[type[ec.EllipticCurve], type[hashes.HashAlgorithm],
     "ES384": (ec.SECP384R1, hashes.SHA384, 48),
     "ES512": (ec.SECP521R1, hashes.SHA512, 66),
 }
+_JWK_CURVES = {"P-256": "ES256", "P-384": "ES384", "P-521": "ES512"}
 
 
 def generate_operator_key() -> ec.EllipticCurvePrivateKey:
@@ -151,10 +152,31 @@ def encode_cpk(public_key: ec.EllipticCurvePublicKey) -> str:
     return base64.b64encode(der).decode()
 
 
-def decode_cpk(text: str) -> ec.EllipticCurvePublicKey:
+def _decode_ec_jwk(jwk: dict) -> ec.EllipticCurvePublicKey:
+    if jwk["kty"] != "EC" or "d" in jwk:
+        raise ValueError
+    curve_cls, _, size = _ALGORITHMS[_JWK_CURVES[jwk["crv"]]]
+    coordinates = []
+    for axis in ("x", "y"):
+        coordinate = jwk[axis]
+        if not isinstance(coordinate, str) or len(coordinate) != (size * 8 + 5) // 6:
+            raise ValueError
+        decoded = _unb64url(coordinate)
+        if len(decoded) != size or _b64url(decoded) != coordinate:
+            raise ValueError
+        coordinates.append(int.from_bytes(decoded, "big"))
+    return ec.EllipticCurvePublicNumbers(
+        coordinates[0], coordinates[1], curve_cls()
+    ).public_key()
+
+
+def decode_cpk(text: str | dict) -> ec.EllipticCurvePublicKey:
+    """Decode a public EC JWK or base64 DER SubjectPublicKeyInfo ``cpk`` claim."""
     try:
+        if isinstance(text, dict):
+            return _decode_ec_jwk(text)
         key = serialization.load_der_public_key(base64.b64decode(text, validate=True))
-    except (ValueError, TypeError):
+    except (InvalidIdentity, KeyError, TypeError, ValueError):
         raise InvalidIdentity("malformed cpk claim") from None
     if not isinstance(key, ec.EllipticCurvePublicKey):
         raise InvalidIdentity("cpk is not an EC public key")
@@ -341,7 +363,7 @@ def verify_server_identity(sdp: str) -> tuple[str, ServerIdentity]:
     if alg not in _ALGORITHMS:
         raise InvalidIdentity(f"unsupported JWT alg {alg!r}")
     cpk = claims.get("cpk")
-    if not isinstance(cpk, str):
+    if not isinstance(cpk, str | dict):
         raise InvalidIdentity("JWT has no cpk claim")
     public_key = decode_cpk(cpk)
     if not _verify_raw(public_key, alg, signing_input, signature):
