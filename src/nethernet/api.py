@@ -33,6 +33,7 @@ from nethernet.errors import (
 from nethernet.identity import (
     IdentityEnvelope,
     IdentitySigner,
+    PlayerSigner,
     ServerIdentity,
     extract_identity,
     strip_identity,
@@ -516,7 +517,7 @@ async def connect_http(
     negotiation_timeout: float = DEFAULT_NEGOTIATION_TIMEOUT,
     capability_check: bool = True,
     on_server_identity: Callable[[ServerIdentity], Awaitable[None] | None] | None = None,
-    identity_signer: IdentitySigner | None = None,
+    identity_signer: PlayerSigner | None = None,
     timeout: float | None = None,
 ) -> Connection:
     """Dial a host through HTTP signaling (Onboarding Guide s4, s7).

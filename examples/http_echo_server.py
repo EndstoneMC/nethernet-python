@@ -29,7 +29,7 @@ def log_offer(offer: nethernet.IncomingOffer) -> None:
     print(f"offer from {offer.network_id_text} with {client}")
 
 
-async def main(host: str, port: int, domain: str) -> None:
+async def main(host: str, port: int) -> None:
     key = generate_operator_key()
     print(f"operator key fingerprint: {cpk_digest(key.public_key())}")
 
@@ -37,7 +37,7 @@ async def main(host: str, port: int, domain: str) -> None:
         handle,
         host=host,
         port=port,
-        identity_signer=IdentitySigner(key, domain=domain),
+        identity_signer=IdentitySigner(key),
         validate_offer=log_offer,
     )
     async with server:
@@ -49,9 +49,8 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--host", default="0.0.0.0")
     parser.add_argument("--port", type=int, default=8080)
-    parser.add_argument("--domain", default="partner.example")
     args = parser.parse_args()
     try:
-        asyncio.run(main(args.host, args.port, args.domain))
+        asyncio.run(main(args.host, args.port))
     except KeyboardInterrupt:
         pass

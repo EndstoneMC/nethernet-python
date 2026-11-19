@@ -37,6 +37,7 @@ from nethernet.identity import (
     IdentityEnvelope,
     IdentitySigner,
     InvalidIdentity,
+    PlayerSigner,
     ServerIdentity,
     generate_operator_key,
 )
@@ -62,6 +63,7 @@ __all__ = [
     # identity assertions (Onboarding Guide s5)
     "IdentityEnvelope",
     "IdentitySigner",
+    "PlayerSigner",
     "ServerIdentity",
     "InvalidIdentity",
     "SignalingRejected",
