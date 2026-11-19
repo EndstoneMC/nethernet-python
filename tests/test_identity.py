@@ -1,5 +1,6 @@
 import base64
 import json
+import re
 
 import pytest
 from cryptography.hazmat.primitives.asymmetric import ec, rsa
@@ -738,17 +739,38 @@ def test_a_deeply_nested_token_header_is_invalid():
         verify_player_identity(envelope_sdp(SDP, "d", token, sign_fingerprints(SDP, key)))
 
 
+def test_a_self_signed_player_token_is_es384_with_x5u_and_the_rule_claims():
+    key = ec.generate_private_key(ec.SECP384R1())
+    signed = PlayerSigner.self_signed(key, clock=lambda: 1000.9).sign(SDP)
+    token = verify_player_identity(signed)[1].token
+    header, payload, signature = token.split(".")
+    cpk = encode_cpk(key.public_key())
+    assert unb64url(header) == canonical_json({"alg": "ES384", "x5u": cpk}).encode() + b"\n"
+    claims = json.loads(unb64url(payload))
+    assert unb64url(payload) == canonical_json(claims).encode() + b"\n"
+    leguuid = claims.pop("leguuid")
+    assert claims == {
+        "aud": "api://auth-minecraft-services/multiplayer",
+        "cpk": cpk,
+        "exp": 1000 + 31536000,
+    }
+    assert re.fullmatch(r"[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}", leguuid)
+    assert len(unb64url(signature)) == 96
+    assert verify_jwt_signature(token, key.public_key())["cpk"] == cpk
+
+
+def test_a_self_signed_player_verifies_under_an_empty_domain():
+    _, identity = verify_player_identity(PlayerSigner.self_signed().sign(SDP))
+    assert identity.domain == ""
+    assert identity.public_key.curve.name == "secp384r1"
+
+
 @pytest.mark.parametrize(
-    "key", [None, ec.generate_private_key(ec.SECP256R1()), RSA_2048], ids=["new", "p256", "rsa"]
+    "key", [ec.generate_private_key(ec.SECP256R1()), RSA_2048], ids=["p256", "rsa"]
 )
-def test_a_self_signed_player_verifies_without_an_xbox_chain(key):
-    signer = PlayerSigner.self_signed(key)
-    _, identity = verify_player_identity(signer.sign(SDP))
-    assert identity.domain == "self"
-    assert identity.claims == {"cpk": encode_cpk(identity.public_key), "iss": "self"}
-    if key is not None:
-        assert identity.public_key.public_numbers() == key.public_key().public_numbers()
-    assert verify_jwt_signature(identity.token, identity.public_key) == identity.claims
+def test_a_self_signed_player_key_must_be_p384(key):
+    with pytest.raises(ValueError, match="P-384"):
+        PlayerSigner.self_signed(key)
 
 
 def jws_with_signature(header: str, signature: bytes) -> str:
@@ -826,4 +848,45 @@ def test_decode_jwk_takes_an_rsa_exponent_of_3():
 def test_invalid_identity_carries_identity_not_allowed():
     with pytest.raises(InvalidIdentity) as info:
         verify_server_identity(SDP)
+    assert info.value.error == SessionError.IDENTITY_NOT_ALLOWED
+
+
+@pytest.mark.parametrize(
+    "header",
+    [{}, {"alg": "none"}, {"alg": "HS256", "kid": 5, "x5u": [], "typ": "JWT"}, {"alg": 1}],
+)
+@pytest.mark.parametrize("signature", ["c2ln", "!", "", "===="])
+def test_a_player_token_header_and_signature_are_never_read(header, signature):
+    key = generate_operator_key()
+    payload = b64url(json.dumps({"cpk": encode_cpk(key.public_key())}).encode())
+    token = f"{b64url(json.dumps(header).encode())}.{payload}.{signature}"
+    _, identity = verify_player_identity(envelope_sdp(SDP, "x", token, sign_fingerprints(SDP, key)))
+    assert identity.token == token
+
+
+@pytest.mark.parametrize(
+    "extra",
+    [
+        {"exp": 0, "nbf": 2**40, "iat": "later"},
+        {"aud": "api://elsewhere", "leguuid": 7, "ap": "x", "ishost": "no"},
+        {"xid": None, "mid": [], "nid": {}, "pid": 1.5, "xname": True, "nname": 0, "pname": ""},
+    ],
+)
+def test_a_player_token_reads_no_claim_but_cpk(extra):
+    key = generate_operator_key()
+    claims = {"cpk": encode_cpk(key.public_key()), **extra}
+    token = player_token(claims["cpk"])
+    header = token.split(".")[0]
+    token = f"{header}.{b64url(json.dumps(claims).encode())}.c2ln"
+    _, identity = verify_player_identity(envelope_sdp(SDP, "x", token, sign_fingerprints(SDP, key)))
+    assert identity.claims == claims
+
+
+@pytest.mark.parametrize("cpk", [None, 5, {"kty": "EC"}, "", "!!!!"])
+def test_a_player_without_a_string_key_cpk_fails_with_identity_not_allowed(cpk):
+    key = generate_operator_key()
+    claims = {} if cpk is None else {"cpk": cpk}
+    token = f"{b64url(b'{}')}.{b64url(json.dumps(claims).encode())}.c2ln"
+    with pytest.raises(InvalidIdentity) as info:
+        verify_player_identity(envelope_sdp(SDP, "x", token, sign_fingerprints(SDP, key)))
     assert info.value.error == SessionError.IDENTITY_NOT_ALLOWED

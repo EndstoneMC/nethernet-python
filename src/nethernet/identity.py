@@ -5,6 +5,7 @@ import binascii
 import json
 import re
 import time
+import uuid
 from collections.abc import Callable
 from dataclasses import dataclass
 
@@ -38,7 +39,8 @@ OPERATOR_DOMAIN = "self"
 IDP_PROTOCOL = "default"
 OPERATOR_ALG = "ES384"
 OPERATOR_TOKEN_LIFETIME = 60
-SELF_SIGNED_PLAYER_ISSUER = "self"
+SELF_SIGNED_AUDIENCE = "api://auth-minecraft-services/multiplayer"
+SELF_SIGNED_TOKEN_LIFETIME = 31536000
 MAX_TOKEN_SIZE = 16384
 MAX_JWS_SIZE = 16384
 
@@ -531,18 +533,34 @@ class PlayerSigner:
         self._domain = _token_issuer(token)
 
     @classmethod
-    def self_signed(cls, private_key: PrivateKey | None = None) -> PlayerSigner:
-        """Create a signer whose token is signed by its own key, with no Xbox chain.
+    def self_signed(
+        cls,
+        private_key: ec.EllipticCurvePrivateKey | None = None,
+        *,
+        clock: Callable[[], float] = time.time,
+    ) -> PlayerSigner:
+        """Create a signer whose token is signed by its own P-384 key, with no Xbox chain.
 
         Args:
-            private_key: The player's key. A new P-384 key is generated when omitted.
+            private_key: The player's P-384 key. A new one is generated when omitted.
+            clock: The source of the signing time in Unix seconds.
         """
         key = generate_operator_key() if private_key is None else private_key
-        alg = _alg_for_key(key)
-        claims = {"cpk": encode_cpk(key.public_key()), "iss": SELF_SIGNED_PLAYER_ISSUER}
-        header_b64 = _b64url(canonical_json({"alg": alg}).encode())
-        payload_b64 = _b64url(canonical_json(claims).encode())
-        signature = _sign(key, alg, f"{header_b64}.{payload_b64}".encode())
+        if not isinstance(key, ec.EllipticCurvePrivateKey) or not isinstance(
+            key.curve, ec.SECP384R1
+        ):
+            raise ValueError("a self-signed player key must be a P-384 key")
+        public_key = encode_cpk(key.public_key())
+        header = {"alg": OPERATOR_ALG, "x5u": public_key}
+        claims = {
+            "aud": SELF_SIGNED_AUDIENCE,
+            "cpk": public_key,
+            "exp": int(clock()) + SELF_SIGNED_TOKEN_LIFETIME,
+            "leguuid": str(uuid.uuid4()),
+        }
+        header_b64 = _b64url(f"{canonical_json(header)}\n".encode())
+        payload_b64 = _b64url(f"{canonical_json(claims)}\n".encode())
+        signature = _sign(key, OPERATOR_ALG, f"{header_b64}.{payload_b64}".encode())
         return cls(f"{header_b64}.{payload_b64}.{_b64url(signature)}", key)
 
     def sign(self, sdp: str) -> str:

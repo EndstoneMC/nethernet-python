@@ -12,8 +12,7 @@ The envelope follows Mojang's public [NetherNet onboarding guide](https://github
 
 - Every JSON text here is compact, with no whitespace and object keys in sorted order (1.26.60).
 - Strings escape only `"`, `\` and control bytes: `\b`, `\t`, `\n`, `\f` and `\r` by name, other bytes 0x01 to 0x1F as `\u00XX` in uppercase hex. Bytes from 0x80 up and `/` are written raw (1.26.60).
-- The operator token's header and payload JSON each end in `
-` before base64url. The fingerprints JWS header does not (1.26.60).
+- The operator token's and the client's self-signed token's header and payload JSON each end in `\n` before base64url. The fingerprints JWS header does not (1.26.60).
 
 ## Envelope
 
@@ -53,7 +52,7 @@ The envelope follows Mojang's public [NetherNet onboarding guide](https://github
 - The client signs a self-signed token with its own P-384 key and `ES384`. The header is `{"alg":"ES384","x5u":<key>}`, or `{"alg":"ES384","kid":"host","x5u":<key>}` when the client signs as host, `<key>` its DER SubjectPublicKeyInfo in standard base64 with padding, with no `typ` (1.26.60).
 - Its payload holds `xid`, `mid`, `nid`, `pid`, `xname`, `nname` and `pname` strings, `exp`, `cpk` (the same key as `x5u`), `aud`, `leguuid`, `ap` (an integer), and `"ishost":true` only for a host (1.26.60).
 - `aud` is `api://auth-minecraft-services/multiplayer`, and `leguuid` is a lowercase hyphenated UUID (1.26.60).
-- It has no `iss`, `iat` or `nbf`. `exp` is the signing time in Unix seconds plus 31536000, one year (1.26.60). The client may shift it by a clock offset (unverified).
+- It has no `iss`, `iat` or `nbf`. `exp` is the signing time in Unix seconds plus 31536000, one year (1.26.60).
 - With no `iss`, the client's `idp.domain` for a self-signed token is empty (1.26.60).
 
 ## Operator assertion
@@ -82,9 +81,14 @@ The envelope follows Mojang's public [NetherNet onboarding guide](https://github
 - `kty` is exactly `EC` or `RSA`, and `crv` exactly `P-256`, `P-384` or `P-521` (1.26.60).
 - EC `x` and `y` are big-endian integers of any non-empty length, so shorter values and leading zero bytes pass. The point must lie on the curve with both coordinates below the field prime (1.26.60).
 - An RSA JWK `n` decodes to exactly 128, 256 or 512 bytes, leading zero bytes counted. `e` is any non-empty big-endian value, leading zeros ignored (1.26.60).
+- This library rejects an RSA exponent that cryptography refuses (below 3 or even).
 - An RSA key pairs with any of `RS256`, `RS384` and `RS512` (1.26.60).
 - Both sides need a non-empty `fingerprints`, a non-empty `token` and a `cpk` claim that parses as a key, then verify `fingerprints` under `cpk` over the received SDP's payload (1.26.60).
 - The host verifying a player reads `cpk` as a string key and does not check the token's own signature (1.26.60).
+- `cpk` is the only member of a player's token the host reads. It reads no header member, so `alg`, `kid` and `x5u` are free (1.26.60).
+- `xid`, `mid`, `nid`, `pid`, `xname`, `nname`, `pname`, `exp`, `aud`, `leguuid`, `ap` and `ishost` may each be missing or hold any type or value. `aud` is not compared with `api://auth-minecraft-services/multiplayer` (1.26.60).
+- Every failure of the host's check on a player, a missing or bad `cpk` included, ends in `CONNECTERROR` with `SessionError.IDENTITY_NOT_ALLOWED` (37) (1.26.60).
+- The host checks a player only on a `CONNECTREQUEST` that came over the signaling channel, HTTP for BDS. One that came over LAN is accepted without the check, with or without an `a=identity` line and whatever that line holds. Only the channel decides this (1.26.60).
 - The client verifying an operator reads `cpk` as a JWK and checks the token's signature under it. The token's `alg` must match the key's type (1.26.60).
 - No side reads `iat`, `exp` or `nbf`. Expiry and clock skew are never checked (1.26.60).
 - Verification yields only pass or fail, with no error code per failure (1.26.60).
