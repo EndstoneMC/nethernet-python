@@ -183,17 +183,23 @@ def _decode_ec_jwk(jwk: dict) -> ec.EllipticCurvePublicKey:
     return ec.EllipticCurvePublicNumbers(coordinates[0], coordinates[1], curve_cls()).public_key()
 
 
-def decode_cpk(text: str | dict) -> ec.EllipticCurvePublicKey:
-    """Decode a public EC JWK or base64 DER SubjectPublicKeyInfo ``cpk`` claim."""
+def decode_cpk(text: str) -> ec.EllipticCurvePublicKey:
+    """Decode a base64 DER SubjectPublicKeyInfo ``cpk`` claim."""
     try:
-        if isinstance(text, dict):
-            return _decode_ec_jwk(text)
         key = serialization.load_der_public_key(base64.b64decode(text, validate=True))
-    except (InvalidIdentity, KeyError, TypeError, ValueError):
+    except (ValueError, TypeError):
         raise InvalidIdentity("malformed cpk claim") from None
     if not isinstance(key, ec.EllipticCurvePublicKey):
         raise InvalidIdentity("cpk is not an EC public key")
     return key
+
+
+def decode_jwk(jwk: dict) -> ec.EllipticCurvePublicKey:
+    """Decode a public EC JWK ``cpk`` claim."""
+    try:
+        return _decode_ec_jwk(jwk)
+    except (InvalidIdentity, KeyError, TypeError, ValueError):
+        raise InvalidIdentity("malformed cpk claim") from None
 
 
 def cpk_digest(public_key: ec.EllipticCurvePublicKey) -> str:
@@ -394,8 +400,8 @@ class ServerIdentity:
 def verify_server_identity(sdp: str) -> tuple[str, ServerIdentity]:
     """Verify the server assertion in an answer SDP; ``(stripped_sdp, ServerIdentity)``.
 
-    Structural verification only (self-signed JWT via the embedded ``cpk``, fingerprints JWS,
-    ``exp``). Trust anchoring — TLS or TOFU pinning of ``key_digest`` — is the caller's policy.
+    Structural verification only (self-signed JWT via the embedded JWK ``cpk``, fingerprints
+    JWS). Trust anchoring — TLS or TOFU pinning of ``key_digest`` — is the caller's policy.
     """
     stripped, envelope = extract_identity(sdp)
     if envelope is None:
@@ -405,14 +411,11 @@ def verify_server_identity(sdp: str) -> tuple[str, ServerIdentity]:
     if alg not in _ALGORITHMS:
         raise InvalidIdentity(f"unsupported JWT alg {alg!r}")
     cpk = claims.get("cpk")
-    if not isinstance(cpk, str | dict):
+    if not isinstance(cpk, dict):
         raise InvalidIdentity("JWT has no cpk claim")
-    public_key = decode_cpk(cpk)
+    public_key = decode_jwk(cpk)
     if not _verify_raw(public_key, alg, signing_input, signature):
         raise InvalidIdentity("JWT self-signature verification failed")
-    exp = claims.get("exp")
-    if isinstance(exp, int | float) and exp < time.time():
-        raise InvalidIdentity("server identity token expired")
     verify_fingerprints(stripped, envelope.fingerprints, public_key)
     return stripped, ServerIdentity(
         domain=envelope.domain,
