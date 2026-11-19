@@ -65,6 +65,7 @@ A parsed message goes to the session of its sender `NetworkID` and connection id
 ## Sending
 
 - A message goes over LAN when LAN signaling is on, the remote is known from LAN discovery or was added as a LAN host, and either no other signaling channel is set or the session prefers LAN. Otherwise it goes over the other signaling channel (1.26.60).
+- Whether another signaling channel is set is a property of the endpoint, never of the remote. Only LAN reachability is per remote. With LAN signaling off the send uses the other channel, or fails with 24 when none is set. With another channel set it goes over LAN only when the session prefers LAN and the remote is on the LAN, otherwise over the other channel. With none set it goes over LAN when the remote is on the LAN, otherwise it fails with 24 (1.26.60).
 - An incoming session prefers the channel its `CONNECTREQUEST` came on, so one that came over LAN answers over LAN, its declining `CONNECTERROR` included. An outgoing session has no preference and uses the other channel when one is set (1.26.60).
 - A LAN send never reports an error (1.26.60).
 - With no route the send fails with `SessionError.NO_SIGNALING_CHANNEL` (24). A send for a session that no longer exists fails with `SessionError.SIGNALING_FAILED_TO_SEND` (26) (1.26.60).

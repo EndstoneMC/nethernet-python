@@ -63,6 +63,7 @@ The routes follow Mojang's public [NetherNet onboarding guide](https://github.co
 - An accepted POST becomes `CONNECTREQUEST <sessionId> <body>` from `{networkId}`, and the request stays open until the host signals back (1.26.60).
 - `<sessionId>` counts up in decimal from 1, with no randomness. Only an accepted POST takes one (1.26.60).
 - The first signal the host sends to `{networkId}` with that session id completes the request as `200 application/sdp`, its body everything after the second space. The signal's type is not checked (1.26.60).
+- Every later signal for that session id finds no pending request and is dropped silently. It is not queued, raises no error and is reported to the sender as success (1.26.60).
 - So a rejecting host's `CONNECTERROR` answers `200 application/sdp` whose body is the bare decimal `SessionError`, not SDP (1.26.60).
 - Over HTTP BDS answers an offer whose `a=identity` is missing or fails verification this way with `SessionError.IDENTITY_NOT_ALLOWED`, body `37`. The check runs whatever `online-mode` says, so a client dialing BDS signs its offer (1.26.60).
 - An offer that passes the identity check but fails in WebRTC gets no signal back, so it ends in the 504 after 10 s (1.26.60).
@@ -92,7 +93,8 @@ The routes follow Mojang's public [NetherNet onboarding guide](https://github.co
 - The client trickles by default. Each `CANDIDATEADD` goes as its own POST whose body is the candidate. An attempt is one offer POST plus one POST per candidate, and none is retried (1.26.60).
 - This library's dialer sends one full-ICE offer POST with every candidate inline and no `CANDIDATEADD`, since aiortc gathers before the offer.
 - A 2xx answer without a transport error succeeds. A non-empty body is delivered as `CONNECTRESPONSE <sessionId> <body>` from the remote, `<sessionId>` that of the offer. An empty body delivers nothing (1.26.60).
-- The client does not inspect the body (1.26.60).
+- The client does not inspect the body, and it keeps no signal type, so a non-empty 2xx body to a `CANDIDATEADD` POST is delivered as a `CONNECTRESPONSE` too (1.26.60).
+- The release client always runs HTTP signaling with an identity verifier and no setting skips it, so that `CONNECTRESPONSE` carries no `a=identity` line, the verifier declines it and the session closes with `SessionError.IDENTITY_NOT_ALLOWED` (37), whatever the body says. The only state checked is that the session exists. A `CONNECTRESPONSE` for a session that no longer exists is ignored (1.26.60).
 - This library raises a 2xx body that does not start with `v=` as the `SessionError` it holds, and as `SessionError.SIGNALING_PARSING_FAILURE` (17) when it is neither.
 - Any other answer fails the dial (1.26.60):
 

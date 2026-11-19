@@ -18,6 +18,11 @@ paths:
 - libwebrtc writes and parses the SDP unedited. The only addition is the optional `a=identity` line (`identity.md`) (1.26.60).
 - BDS's offer advertises `a=max-message-size:262144`. Its answer advertises the smaller of the offer's value and 262144, or 262144 when the offer's value is 0 or less (1.26.60).
 - The SDP omits `a=max-message-size` when the value is 65536, and a missing line means 65536 (1.26.60).
+- The `a=max-message-size` line ends at `\n` with one trailing `\r` stripped. Its value is the first field after the colon, and any further colon-separated fields are ignored, so `a=max-message-size:5:9` reads 5 (1.26.60).
+- The value must start with an ASCII digit or `-`, then hold only ASCII decimal digits to the end of the field, with no `+`, space, tab, extra `\r`, `0x` prefix, non-ASCII digit or 0x00. A bare `-` fails. Leading zeros are decimal, so `007` is 7. A field that fails this, or lies outside -2147483648 to 2147483647, fails the whole SDP with an invalid max message size error (1.26.60).
+- 0 and negative values in range parse (1.26.60).
+- Once both descriptions are set, the SCTP max message size is the local value when the remote value is 0, otherwise the smaller of the two, compared signed. A peer value of 0 therefore means any size, and a negative peer value is taken as is (1.26.60).
+- As answerer BDS fragments at the smaller of 262144 and the peer's value minus 1, at 65535 when the peer sends no line, and at 262143 when the peer sends 0 (1.26.60).
 - Ignore a STUN response that fails message integrity and keep waiting, as libwebrtc does.
 - Closing a session closes its peer connection (1.26.60).
 
@@ -89,7 +94,7 @@ paths:
 - aiortc is non-trickle: `setLocalDescription` returns with gathering complete and every candidate in the SDP.
 - aiortc falls back to `stun:stun.l.google.com:19302` when `iceServers` is `None`. Pass `RTCConfiguration(iceServers=[])` to clear the servers.
 - aiortc writes `a=max-message-size:65536`. Rewrite it to the values BDS advertises (Peer connection).
-- aiortc exposes no SCTP max message size. Take it from the remote SDP's `a=max-message-size`, 65536 when the line is missing.
+- aiortc exposes no SCTP max message size. Parse the remote value as the grammar under Peer connection says, failing the remote description when it does not parse. Take the remote value from its SDP `a=max-message-size`, 65536 when the line is missing, then use the local advertised value when the remote is 0 and otherwise the signed smaller of the two. Fragments are that size minus 1, and a size of 1 or less closes with 34.
 - `aiortc.sdp.candidate_from_sdp` and `candidate_to_sdp` take and return a candidate without the `candidate:` prefix. Strip it before parsing and add it back after serializing, and give a parsed candidate `sdpMLineIndex = 0`. aiortc matches an `sdpMid` of `""` to no m-line, so leave it `None`.
 - aiortc's `addIceCandidate` needs the remote description set. Apply a queued `CANDIDATEADD` (`signaling.md`) with it after both descriptions are set.
 - aiortc gives a channel close no error status. Count a close as no error when it comes from a stream reset, either side's `RTCDataChannel.close()`, while `pc.sctp.state` stays `connected`. Count it as an error when the SCTP transport has closed, by ABORT or otherwise, or `pc.sctp.transport.state` is `failed`.

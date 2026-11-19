@@ -55,7 +55,7 @@ The facade is `api.py`, `transport_api.py` and `__init__.py`, a thin asyncio lay
 - Where BDS fails silently at startup, as on a bind or listen error, the library raises instead: the error propagates out of `serve()` and its startup, as with `asyncio.start_server`. What peers see on the wire still matches BDS.
 - The library does the identity envelope only (`protocol/identity.md`). Authorizing a player and pinning an operator key are the application's callbacks.
 - `validate_offer(offer)` returns a bool: `False` refuses the offer with 37. Any exception from the accept path drops the offer with no reply, so an HTTP client gets the 504 after 10 s (`protocol/http-signaling.md`).
-- `on_server_identity(identity)` runs on an HTTP `connect` for the answer's verified operator identity, a `ServerIdentity` with `domain`, `claims`, `public_key` and `key_pin`, sync or async. It is skipped over LAN or when unset. A raise, or an answer whose identity fails verification, refuses the answer and the dialer closes with 37. The return value is ignored.
+- `on_server_identity(identity)` runs on an HTTP `connect` for the answer's verified operator identity, a `ServerIdentity` with `domain`, `claims`, `public_key` and `key_pin`, sync or async. The identity of an HTTP answer is always verified, with or without the callback, and skipped only over LAN. A raise, or an answer whose identity is missing or fails verification, refuses the answer and the dialer closes with 37. The return value is ignored.
 
 ## Ask first
 

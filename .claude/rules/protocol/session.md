@@ -105,11 +105,12 @@ The close reasons (1.26.60):
 - An `errors` entry holds `time` (string), and, when set, `address` (string), `port` (int), `url` (string), `code` (int) and `message` (string) (1.26.60).
 - A pair holds `local`, `remote` (strings), `states` (array of strings), `bytesSent`, `packetsSent`, `bytesReceived`, `packetsReceived`, and for each of those four counters a rate, an average rate and a maximum rate (`bytesSentRate`, `avgBytesSentRate`, `maxBytesSentRate`, `packetsSentRate`, `bytesReceivedRate`, `packetsReceivedRate` and so on), the average a float and the others integers, and `rtt` and `avgrtt` as floats. Each is omitted when zero (1.26.60).
 - aiortc and aioice record no STUN round-trip time or response count, so this library reports `rtt`, `avgrtt` and `responses_received` as `None`.
+- Floats in the summary are written as `identity.md` formats a non-integer number.
 - This library keys candidates `L<n>` and `R<n>` in order of first sighting, and leaves `rtt` and `avgrtt` out of the JSON.
 
 ## LAN sessions
 
 - A session created from a LAN message is non-trickle whatever the endpoint setting. BDS answers a LAN offer with one `CONNECTRESPONSE` carrying its candidates inline and sends no `CANDIDATEADD` (1.26.60).
 - It gets no `identity_signer`, so its answer carries no `a=identity` (1.26.60).
-- It replies over LAN (Signaling channel), and the accept decision is told it came over LAN (1.26.60).
+- It replies over LAN (Signaling channel), and the accept decision is told it came over LAN. The identity check is skipped for any `CONNECTREQUEST` or `CONNECTRESPONSE` that came over LAN (1.26.60).
 - A dialer the application opens toward a LAN host keeps the endpoint's trickle setting (1.26.60).

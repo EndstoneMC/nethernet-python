@@ -84,6 +84,9 @@ BDS's application data is the lowercase hex text of this binary record, so appli
 - The nonce is checked only when the advertisement updates: at startup, when a player joins or leaves, and when the player limit changes. An update more than 300 s of monotonic time after the nonce was drawn draws a new one. An idle host keeps its nonce (1.26.60).
 - `connection` is a connection-type value, not the transport: -1 undefined, 0 local, 1 IPv4, 2 IPv6, 3 plain WebSocket signaling, 4 LAN WebRTC signaling, 5 NAT, 6 UPnP, 7 JSON-RPC WebSocket signaling, 8 unknown IP (1.26.60).
 - BDS sends 7 only while its link to the online signaling service is up, and 4 otherwise. A host without that link, such as a LAN or HTTP-only host, sends 4 (1.26.60).
+- A receiving client decodes the hex case-insensitively and validates no character. An odd-length text fails at the first byte and drops the record (1.26.60).
+- A receiver ignores bytes after the last field. A bool is any non-zero byte. A varint is at most 5 bytes, zero-padded forms such as `80 00` are accepted, bits above 31 are dropped, a sixth byte fails, and a zigzag varint decodes on 32 bits (1.26.60).
+- This library drops a record whose hex holds a non-hex character.
 - The client never checks `dataVersion`. It parses every value with the same 14 fields and drops only bytes that fail to parse (1.26.60).
 - This library has no online signaling link, so it advertises 4.
 - A stock BDS record is 67 bytes, 134 hex characters (1.26.60).

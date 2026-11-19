@@ -23,6 +23,7 @@ paths:
 - When ICE reaches Connected (`transport.md`), the fragment size becomes the SCTP transport's max message size minus 1. It keeps its previous value when no max message size is known (1.26.60).
 - A max message size of 1 or less closes the session with `SessionError.INVALID_ARGUMENT` (34) (1.26.60).
 - The fragment size is per session (1.26.60).
+- The max message size is the one `transport.md` negotiates. A peer value of 0 gives the local value, and a negative one is 1 or less (1.26.60).
 - Against BDS the max message size is at most 262144 (`transport.md`), so the fragment size never exceeds 262143 and one fragment never passes the send-queue limit (`transport.md`) (1.26.60).
 
 ## Channels

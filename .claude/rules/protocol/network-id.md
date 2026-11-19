@@ -27,7 +27,7 @@ Read, the JSON type picks the form (1.26.60):
 
 - An integer is P2P. A negative integer `-n` is P2P `2^64 - n`, so `-1` is `18446744073709551615`.
 - A bool is a number: `true` is P2P 1, `false` is P2P 0.
-- A real truncates toward zero to a signed 64-bit integer and keeps only its low 32 bits. `1.5` and `1.0` give P2P 1, `5e9` gives P2P 705032704, `-1.0` gives P2P 4294967295, and an integer literal beyond the 64-bit range, which reads as a real, gives P2P 0.
+- A real truncates toward zero to a signed 64-bit integer and keeps only its low 32 bits. `1.5` and `1.0` give P2P 1, `5e9` gives P2P 705032704, `-1.0` gives P2P 4294967295, and an integer literal beyond the 64-bit range, which reads as a real, gives P2P 0. A real from 2^63 up, one below -2^63, NaN and an infinity also give P2P 0. `-0.5` gives P2P 0, `4294967296.0` gives 0 and `4294967297.9` gives 1.
 - A string parses as below.
 - `null`, an array or an object is unset.
 

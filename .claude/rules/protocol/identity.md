@@ -10,8 +10,12 @@ The envelope follows Mojang's public [NetherNet onboarding guide](https://github
 
 ## JSON
 
-- Every JSON text here is compact, with no whitespace and object keys in sorted order (1.26.60).
+- Every JSON text here is compact, with no whitespace and object keys in sorted order, compared as unsigned bytes of their UTF-8, which for valid UTF-8 is code point order (1.26.60).
+- A string or key is cut at its first 0x00 byte and the closing quote follows. A 0x00 is never written as `\u0000` (1.26.60).
+- An integer is plain decimal with a leading `-` when negative, no `+` and no leading zeros. A non-integer number is formatted with 16 significant digits and always a decimal point, then every trailing zero but the last one after the point is removed: `1.5` becomes `1.50`, `2.0` stays `2.0`, `0.1` becomes `0.10`, and an exponent form is left as is (1.26.60).
+- This library raises `TypeError` for a NaN or infinite number. Identity tokens never hold one.
 - Strings escape only `"`, `\` and control bytes: `\b`, `\t`, `\n`, `\f` and `\r` by name, other bytes 0x01 to 0x1F as `\u00XX` in uppercase hex. Bytes from 0x80 up and `/` are written raw (1.26.60).
+- Every `iat` and `exp` is a JSON integer in whole seconds (1.26.60).
 - The operator token's and the client's self-signed token's header and payload JSON each end in `\n` before base64url. The fingerprints JWS header does not (1.26.60).
 
 ## Envelope
@@ -61,6 +65,7 @@ The envelope follows Mojang's public [NetherNet onboarding guide](https://github
 - Its `token` is a JWT signed by the operator's key. The header is `{"alg":"ES384","x5u":<key>}`, `<key>` the operator's DER SubjectPublicKeyInfo in standard base64 with `+` and `/`, with no `typ` and no `kid` (1.26.60).
 - The payload is `{"cpk":{"crv":"P-384","kty":"EC","x":<x>,"y":<y>},"exp":<exp>,"iat":<iat>}`, `<x>` and `<y>` the 48-byte coordinates in base64url (1.26.60).
 - `iat` is the signing time in Unix seconds and `exp` is `iat + 60` (1.26.60).
+- Every DER SubjectPublicKeyInfo the operator and the client write names its curve and holds the uncompressed point, `04`, `X`, `Y`. A JWK carries `x` and `y` as separate coordinates (1.26.60).
 - `fingerprints` is signed by the same key (1.26.60).
 - A client checks the operator's key against a trust-on-first-use store and asks the player about an unknown key (1.26.60).
 - The client's pin is the operator's key itself, its DER SubjectPublicKeyInfo in standard base64, with no digest. It matches on the key alone, not per host (1.26.60).
@@ -87,6 +92,7 @@ The envelope follows Mojang's public [NetherNet onboarding guide](https://github
 - `xid`, `mid`, `nid`, `pid`, `xname`, `nname`, `pname`, `exp`, `aud`, `leguuid`, `ap` and `ishost` may each be missing or hold any type or value. `aud` is not compared with `api://auth-minecraft-services/multiplayer` (1.26.60).
 - Every failure of the host's check on a player, a missing or bad `cpk` included, ends in `CONNECTERROR` with `SessionError.IDENTITY_NOT_ALLOWED` (37) (1.26.60).
 - The host checks a player only on a `CONNECTREQUEST` that came over the signaling channel, HTTP for BDS. One that came over LAN is accepted without the check, with or without an `a=identity` line and whatever that line holds. Only the channel decides this (1.26.60).
+- The client skips the operator check only for a `CONNECTRESPONSE` that came over LAN, and runs it for every one that came over HTTP (1.26.60).
 - The client verifying an operator reads `cpk` as a JWK and checks the token's signature under it. The token's `alg` must match the key's type (1.26.60).
 - No side reads `iat`, `exp` or `nbf`. Expiry and clock skew are never checked (1.26.60).
 - Verification yields only pass or fail, with no error code per failure (1.26.60).
