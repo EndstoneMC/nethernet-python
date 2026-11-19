@@ -1,5 +1,6 @@
 import asyncio
 import json
+import re
 
 from aioice.ice import CandidatePair
 from session_doubles import (
@@ -28,6 +29,9 @@ from nethernet.signaling.messages import (
 )
 
 CID = 4242
+IN_PROGRESS = CandidatePair.State.IN_PROGRESS
+RELAY_CANDIDATE = "candidate:5 1 udp 100 198.51.100.4 3478 typ relay"
+TIMESTAMP = re.compile(r"\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z")
 
 
 async def dial(manager, **kwargs):
@@ -285,6 +289,18 @@ async def test_negotiation_timeout_stops_once_the_answer_is_set():
     await manager.aclose()
 
 
+async def test_zero_negotiation_timeout_fires_at_once_and_the_next_sweep_closes_with_14():
+    clock = VirtualClock()
+    recorder = Recorder()
+    manager = make_manager(Channels(), recorder, negotiation_timeout=0)
+    await dial(manager)
+    await clock.advance(4.75)
+    assert recorder.errors() == []
+    await clock.advance(0.25)
+    assert recorder.errors() == [SessionError.NEGOTIATION_TIMEOUT_WAITING_FOR_RESPONSE]
+    await manager.aclose()
+
+
 async def test_negative_negotiation_timeout_counts_as_zero():
     clock = VirtualClock()
     recorder = Recorder()
@@ -477,6 +493,7 @@ async def test_rates_divide_by_whole_seconds_and_keep_mean_and_maximum():
     recorder = Recorder()
     manager = make_manager(Channels(), recorder)
     session = await dial(manager)
+    session.peer_connection.nominate(HOST_CANDIDATE, RELAY_CANDIDATE, IN_PROGRESS)
     manager.send(REMOTE, CID, b"x" * 300)
     await clock.advance(1.75)
     session.status()
@@ -486,8 +503,22 @@ async def test_rates_divide_by_whole_seconds_and_keep_mean_and_maximum():
     session.status()
     assert session.status().send_rate == 50
     manager.close(REMOTE, CID)
-    rate = json.loads(recorder.closed[0][2])["sendRate"]
-    assert rate == {"current": 50, "average": 175.0, "maximum": 300}
+    summary = json.loads(recorder.closed[0][2])
+    assert summary["active"] == "L1-R1"
+    assert summary["pairs"] == {
+        "L1-R1": {
+            "local": "L1",
+            "remote": "R1",
+            "states": ["in_progress"],
+            "bytesSent": 401,
+            "bytesSentRate": 50,
+            "avgBytesSentRate": 175.0,
+            "maxBytesSentRate": 300,
+            "packetsSent": 2,
+            "avgPacketsSentRate": 0.5,
+            "maxPacketsSentRate": 1,
+        }
+    }
     await manager.aclose()
 
 
@@ -514,9 +545,12 @@ async def test_candidates_are_recorded_on_first_sighting_with_anonymized_ips():
     )
     manager.close(REMOTE, CID)
     summary = json.loads(recorder.closed[0][2])
-    assert [c["ip"] for c in summary["localCandidates"]] == ["192.168.1.0", "203.0.113.0"]
-    assert [c["type"] for c in summary["localCandidates"]] == ["host", "srflx"]
-    assert summary["remoteCandidates"] == [{"type": "host", "ip": "10.0.0.0", "url": ""}]
+    assert summary["local"] == {
+        "L1": {"type": "host", "ip": "192.168.1.0"},
+        "L2": {"type": "srflx", "ip": "203.0.113.0"},
+    }
+    assert summary["remote"] == {"R1": {"type": "host", "ip": "10.0.0.0"}}
+    assert "pairs" not in summary and "active" not in summary
     await manager.aclose()
 
 
@@ -533,23 +567,17 @@ async def test_pair_states_grow_on_change_and_rtt_is_none_without_stun_timing():
     manager = make_manager(Channels(), recorder)
     session = await dial(manager)
     pc = session.peer_connection
-    relay = "candidate:5 1 udp 100 198.51.100.4 3478 typ relay"
-    states = (
-        CandidatePair.State.IN_PROGRESS,
-        CandidatePair.State.IN_PROGRESS,
-        CandidatePair.State.SUCCEEDED,
-    )
-    for state in states:
-        pc.nominate(HOST_CANDIDATE, relay, state)
+    for state in (IN_PROGRESS, IN_PROGRESS, CandidatePair.State.SUCCEEDED):
+        pc.nominate(HOST_CANDIDATE, RELAY_CANDIDATE, state)
         await clock.advance(2.25)
         session.status()
     status = session.status()
     assert status.relay is True
     assert status.rtt_ms is None
     manager.close(REMOTE, CID)
-    summary = json.loads(recorder.closed[0][2])
-    assert summary["candidatePair"]["states"] == ["in_progress", "succeeded"]
-    assert (summary["rtt"], summary["avgrtt"], summary["responsesReceived"]) == (None, None, None)
+    pair = json.loads(recorder.closed[0][2])["pairs"]["L1-R1"]
+    assert pair["states"] == ["in_progress", "succeeded"]
+    assert "rtt" not in pair and "avgrtt" not in pair
     await manager.aclose()
 
 
@@ -558,3 +586,15 @@ async def test_session_manager_is_an_async_context_manager():
     async with make_manager(Channels(), recorder) as manager:
         await dial(manager)
     assert recorder.errors() == [None]
+
+
+async def test_summary_always_has_start_end_and_errors_and_omits_empty_members():
+    recorder = Recorder()
+    manager = make_manager(Channels(), recorder, lan=False, http=False)
+    await dial(manager)
+    summary = json.loads(recorder.closed[0][2])
+    assert set(summary) == {"startTime", "endTime", "errors"}
+    assert TIMESTAMP.fullmatch(summary["startTime"])
+    assert TIMESTAMP.fullmatch(summary["endTime"])
+    assert summary["errors"] == []
+    await manager.aclose()

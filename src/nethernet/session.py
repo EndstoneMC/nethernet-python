@@ -5,6 +5,7 @@ import ipaddress
 import json
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, replace
+from datetime import UTC, datetime
 from enum import Enum
 
 from nethernet.constants import DEFAULT_NEGOTIATION_TIMEOUT
@@ -106,17 +107,22 @@ def candidate_info(text: str) -> tuple[tuple[str, str, str, str], dict[str, str]
     if len(fields) < 8 or fields[6] != "typ":
         return None
     protocol, ip, port, kind = fields[2].lower(), fields[4], fields[5], fields[7]
-    extras = dict(zip(fields[8::2], fields[9::2], strict=False))
-    info = {
-        "type": kind,
-        "ip": anonymize_ip(ip),
-        "url": extras.get("url", ""),
-    }
-    return (protocol, ip, port, kind), info
+    return (protocol, ip, port, kind), {"type": kind, "ip": anonymize_ip(ip)}
 
 
 def _milliseconds(seconds: float | None) -> int | None:
     return None if seconds is None else int(seconds * 1000)
+
+
+def _timestamp(moment: datetime) -> str:
+    return moment.strftime("%Y-%m-%dT%H:%M:%S.") + f"{moment.microsecond // 1000:03d}Z"
+
+
+def _now() -> datetime:
+    return datetime.now(UTC)
+
+
+_COUNTERS = ("bytesSent", "packetsSent", "bytesReceived", "packetsReceived")
 
 
 class _Rate:
@@ -132,8 +138,40 @@ class _Rate:
         self.average += (value - self.average) / self._samples
         self.maximum = max(self.maximum, value)
 
-    def summary(self) -> dict[str, float]:
-        return {"current": self.current, "average": self.average, "maximum": self.maximum}
+
+class _Pair:
+    def __init__(self, local: str, remote: str) -> None:
+        self.local = local
+        self.remote = remote
+        self.states: list[str] = []
+        self.counters = [0, 0, 0, 0]
+        self.rates = [_Rate() for _ in _COUNTERS]
+        self.rtt: float | None = None
+        self.avgrtt: float | None = None
+
+    def add(self, deltas: list[int], elapsed: int) -> None:
+        for index, delta in enumerate(deltas):
+            self.counters[index] += delta
+            self.rates[index].update(delta // elapsed)
+
+    def summary(self) -> dict[str, object]:
+        out: dict[str, object] = {"local": self.local, "remote": self.remote}
+        if self.states:
+            out["states"] = list(self.states)
+        for name, count, rate in zip(_COUNTERS, self.counters, self.rates, strict=True):
+            title = name[0].upper() + name[1:]
+            values = (
+                (name, count),
+                (f"{name}Rate", rate.current),
+                (f"avg{title}Rate", rate.average),
+                (f"max{title}Rate", rate.maximum),
+            )
+            out.update((key, value) for key, value in values if value)
+        if self.rtt:
+            out["rtt"] = float(self.rtt)
+        if self.avgrtt:
+            out["avgrtt"] = float(self.avgrtt)
+        return out
 
 
 class Statistics:
@@ -144,96 +182,96 @@ class Statistics:
         self.packets_received = 0
         self.snapshot: SessionStatus | None = None
         self.taken_at: float | None = None
+        self.start_time = _now()
         self._base_time = now
-        self._base = (0, 0)
-        self._send_rate = _Rate()
-        self._receive_rate = _Rate()
-        self._local: dict[tuple[str, str, str, str], dict[str, str]] = {}
-        self._remote: dict[tuple[str, str, str, str], dict[str, str]] = {}
-        self._pair_states: list[str] = []
-        self._pair: dict[str, object] = {}
+        self._base = [0, 0, 0, 0]
+        self._send_rate = 0
+        self._local: dict[tuple[str, str, str, str], tuple[str, dict[str, str]]] = {}
+        self._remote: dict[tuple[str, str, str, str], tuple[str, dict[str, str]]] = {}
+        self._pairs: dict[str, _Pair] = {}
+        self._active: str | None = None
         self._rtt: float | None = None
-        self._responses: int | None = None
         self._relay = False
 
-    def see_local_candidate(self, text: str) -> None:
-        self._see(self._local, text)
+    def see_local_candidate(self, text: str) -> str | None:
+        return self._see(self._local, "L", text)
 
-    def see_remote_candidate(self, text: str) -> None:
-        self._see(self._remote, text)
+    def see_remote_candidate(self, text: str) -> str | None:
+        return self._see(self._remote, "R", text)
 
     @staticmethod
-    def _see(table: dict, text: str) -> None:
+    def _see(table: dict, prefix: str, text: str) -> str | None:
         parsed = candidate_info(text)
-        if parsed is not None and parsed[0] not in table:
-            table[parsed[0]] = parsed[1]
+        if parsed is None:
+            return None
+        key, info = parsed
+        if key not in table:
+            table[key] = (f"{prefix}{len(table) + 1}", info)
+        return table[key][0]
+
+    def _totals(self) -> list[int]:
+        return [self.bytes_sent, self.packets_sent, self.bytes_received, self.packets_received]
 
     def take(self, now: float, state: SessionState, ice_state: str, pair: dict | None) -> bool:
         elapsed = int(now - (self.taken_at if self.taken_at is not None else self._base_time))
         if elapsed < _SNAPSHOT_INTERVAL:
             return False
-        sent, received = self.bytes_sent, self.bytes_received
-        self._send_rate.update((sent - self._base[0]) // elapsed)
-        self._receive_rate.update((received - self._base[1]) // elapsed)
-        self._base = (sent, received)
+        totals = self._totals()
+        deltas = [total - base for total, base in zip(totals, self._base, strict=True)]
+        self._base = totals
         self.taken_at = now
+        self._send_rate = deltas[0] // elapsed
         if pair is not None:
-            self._take_pair(pair)
+            self._take_pair(pair, deltas, elapsed)
         self.snapshot = SessionStatus(
             state=state,
             ice_state=ice_state,
             rtt_ms=_milliseconds(self._rtt),
-            bytes_sent=sent,
-            send_rate=self._send_rate.current,
-            bytes_received=received,
+            bytes_sent=self.bytes_sent,
+            send_rate=self._send_rate,
+            bytes_received=self.bytes_received,
             packets_sent=self.packets_sent,
             relay=self._relay,
         )
         return True
 
-    def _take_pair(self, pair: dict) -> None:
+    def _take_pair(self, pair: dict, deltas: list[int], elapsed: int) -> None:
+        local = self.see_local_candidate(str(pair.get("local", "")))
+        remote = self.see_remote_candidate(str(pair.get("remote", "")))
+        if local is None or remote is None:
+            return
+        pair_id = f"{local}-{remote}"
+        entry = self._pairs.setdefault(pair_id, _Pair(local, remote))
         state = str(pair.get("state", ""))
-        if not self._pair_states or self._pair_states[-1] != state:
-            self._pair_states.append(state)
-        self._rtt = pair.get("rtt")
-        self._responses = pair.get("responses_received")
-        local = candidate_info(str(pair.get("local", "")))
-        remote = candidate_info(str(pair.get("remote", "")))
-        if local is not None:
-            self._local.setdefault(local[0], local[1])
-        if remote is not None:
-            self._remote.setdefault(remote[0], remote[1])
-            self._relay = remote[0][3] == "relay"
-        self._pair = {
-            "local": local[1] if local is not None else None,
-            "remote": remote[1] if remote is not None else None,
-        }
-
-    @property
-    def avgrtt(self) -> float | None:
-        if self._rtt is None:
-            return None
-        return self._rtt / self._responses if self._responses else self._rtt
+        if state and (not entry.states or entry.states[-1] != state):
+            entry.states.append(state)
+        entry.add(deltas, elapsed)
+        rtt = pair.get("rtt")
+        responses = pair.get("responses_received")
+        entry.rtt = rtt
+        entry.avgrtt = None if rtt is None else (rtt / responses if responses else rtt)
+        self._rtt = rtt
+        self._active = pair_id
+        remote_info = candidate_info(str(pair.get("remote", "")))
+        self._relay = remote_info is not None and remote_info[0][3] == "relay"
 
     def summary(self) -> str:
-        return json.dumps(
-            {
-                "rtt": _milliseconds(self._rtt),
-                "avgrtt": _milliseconds(self.avgrtt),
-                "responsesReceived": self._responses,
-                "bytesSent": self.bytes_sent,
-                "bytesReceived": self.bytes_received,
-                "packetsSent": self.packets_sent,
-                "packetsReceived": self.packets_received,
-                "sendRate": self._send_rate.summary(),
-                "receiveRate": self._receive_rate.summary(),
-                "relay": self._relay,
-                "localCandidates": list(self._local.values()),
-                "remoteCandidates": list(self._remote.values()),
-                "candidatePair": {**self._pair, "states": list(self._pair_states)},
-            },
-            separators=(",", ":"),
-        )
+        out: dict[str, object] = {
+            "startTime": _timestamp(self.start_time),
+            "endTime": _timestamp(_now()),
+            "errors": [],
+        }
+        if self._active:
+            out["active"] = self._active
+        for name, table in (("local", self._local), ("remote", self._remote)):
+            if table:
+                out[name] = {
+                    candidate_id: {key: value for key, value in info.items() if value}
+                    for candidate_id, info in table.values()
+                }
+        if self._pairs:
+            out["pairs"] = {pair_id: pair.summary() for pair_id, pair in self._pairs.items()}
+        return json.dumps(out, separators=(",", ":"))
 
 
 class Session:

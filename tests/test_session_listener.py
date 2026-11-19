@@ -404,3 +404,32 @@ async def test_silent_active_session_is_never_closed():
     assert recorder.closed == []
     assert manager.state(REMOTE, CID).state is SessionState.ACTIVE
     await manager.aclose()
+
+
+async def test_declined_answer_for_an_unknown_pair_is_ignored_with_no_37():
+    channels = Channels()
+    recorder = Recorder()
+    manager = make_manager(channels, recorder, http=True, accept=lambda request: False)
+    await manager.handle_signal(REMOTE, ConnectResponse(CID, ANSWER).serialize(), via_lan=True)
+    await manager.handle_signal(REMOTE, ConnectResponse(CID, ANSWER).serialize())
+    await settle()
+    assert channels.lan == channels.http == []
+    assert manager.sessions == []
+    assert recorder.closed == []
+    await manager.aclose()
+
+
+async def test_first_offer_attaches_to_an_early_session_and_a_later_one_is_dropped():
+    channels = Channels()
+    manager = make_manager(channels, Recorder())
+    await manager.handle_signal(REMOTE, CandidateAdd(CID, REMOTE_CANDIDATE).serialize())
+    early = manager.get(REMOTE, CID)
+    await offer(manager)
+    pc = early.peer_connection
+    answers = len(channels.lan)
+    await offer(manager)
+    assert manager.get(REMOTE, CID) is early
+    assert early.peer_connection is pc
+    assert pc.rtc.events.count("remote") == 1
+    assert len(channels.lan) == answers
+    await manager.aclose()
