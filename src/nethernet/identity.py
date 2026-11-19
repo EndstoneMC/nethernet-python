@@ -165,9 +165,7 @@ def _decode_ec_jwk(jwk: dict) -> ec.EllipticCurvePublicKey:
         if len(decoded) != size or _b64url(decoded) != coordinate:
             raise ValueError
         coordinates.append(int.from_bytes(decoded, "big"))
-    return ec.EllipticCurvePublicNumbers(
-        coordinates[0], coordinates[1], curve_cls()
-    ).public_key()
+    return ec.EllipticCurvePublicNumbers(coordinates[0], coordinates[1], curve_cls()).public_key()
 
 
 def decode_cpk(text: str | dict) -> ec.EllipticCurvePublicKey:
