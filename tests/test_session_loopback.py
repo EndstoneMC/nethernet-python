@@ -1,6 +1,6 @@
 import asyncio
 
-from nethernet.errors import SendType, SessionError
+from nethernet.errors import SendType
 from nethernet.network_id import NetworkID
 from nethernet.session import SessionState
 from nethernet.session_manager import SessionManager
@@ -64,7 +64,7 @@ async def test_dialer_joins_a_lan_listener_and_packets_flow_both_ways():
         assert await next_item(listener.packets) == big
 
         assert dialer.manager.close(LISTENER, session.connection_id) is True
-        assert dialer.closed == [SessionError.NONE]
+        assert dialer.closed == [None]
     finally:
         await dialer.manager.aclose()
         await listener.manager.aclose()

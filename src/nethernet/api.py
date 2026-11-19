@@ -210,7 +210,7 @@ class Connection:
         """
         opened = self._connected.done() and not self._connected.cancelled()
         if not opened or self._closed.is_set() or not self._session.send(data, reliability):
-            raise ConnectionClosed(self._error or SessionError.NONE)
+            raise ConnectionClosed(self._error)
 
     async def recv(self) -> bytes:
         """Return the next whole packet in arrival order.
@@ -221,7 +221,7 @@ class Connection:
         item = await self._queue.get()
         if isinstance(item, _Closed):
             self._queue.put_nowait(_CLOSED)
-            raise ConnectionClosed(self._error or SessionError.NONE)
+            raise ConnectionClosed(self._error)
         return item
 
     def __aiter__(self) -> AsyncIterator[bytes]:
@@ -231,25 +231,30 @@ class Connection:
         try:
             return await self.recv()
         except ConnectionClosed as exc:
-            if exc.error == SessionError.NONE:
+            if exc.error is None:
                 raise StopAsyncIteration from None
             raise
 
-    async def close(self, error: SessionError = SessionError.NONE) -> None:
+    async def close(self, error: SessionError | None = None) -> None:
         """Close the connection.
 
         Args:
-            error: The reason reported to this end only, the peer is not told.
+            error: The reason reported to this end only, the peer is not told. ``None`` is a clean
+                close.
         """
         self._session.close(error)
         await self._session.wait_closed()
         if self._owner is not None:
             await self._owner.aclose()
 
-    async def wait_closed(self) -> SessionError:
-        """Wait for the close and return its error, ``NONE`` when this end closed."""
+    async def wait_closed(self) -> SessionError | None:
+        """Wait for the close and return its error.
+
+        Returns:
+            The error the connection closed with, ``None`` when it closed without an error.
+        """
         await self._closed.wait()
-        return self._error or SessionError.NONE
+        return self._error
 
     async def __aenter__(self) -> Connection:
         return self
@@ -261,7 +266,7 @@ class Connection:
         if not self._connected.done():
             self._connected.set_result(None)
 
-    def _mark_closed(self, error: SessionError) -> None:
+    def _mark_closed(self, error: SessionError | None) -> None:
         self._error = error
         if not self._connected.done():
             self._connected.set_exception(ConnectionFailed(error))
@@ -313,7 +318,7 @@ class _Endpoint:
         if self._on_change is not None:
             self._on_change()
 
-    def _on_close(self, session: Session, error: SessionError, summary: str) -> None:
+    def _on_close(self, session: Session, error: SessionError | None, summary: str) -> None:
         self._pending.pop(session, None)
         conn = self.conns.pop(session, None)
         if conn is not None:

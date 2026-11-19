@@ -11,7 +11,7 @@ A session closes with one `SessionError`. `CONNECTERROR` carries it (`signaling.
 
 | Value | Member | Value | Member |
 | ---: | --- | ---: | --- |
-| 0 | `NONE` | 21 | `SIGNALING_MESSAGE_DELIVERY_FAILED` |
+| 0 | success, reported as `None` | 21 | `SIGNALING_MESSAGE_DELIVERY_FAILED` |
 | 1 | `DESTINATION_NOT_LOGGED_IN` | 22 | `SIGNALING_TURN_AUTH_FAILED` |
 | 2 | `NEGOTIATION_TIMEOUT` | 23 | `SIGNALING_FALLBACK_TO_BEST_EFFORT_DELIVERY` |
 | 3 | `WRONG_TRANSPORT_VERSION` | 24 | `NO_SIGNALING_CHANNEL` |
@@ -39,7 +39,7 @@ A session closes with one `SessionError`. `CONNECTERROR` carries it (`signaling.
 
 | Code | Situation |
 | ---: | --- |
-| `NONE` (0) | The application closes a session itself, or a data channel closes with no error, a clean close by the remote included. A signaling send that succeeds, over HTTP included, reports 0 (1.26.60). |
+| 0 | The application closes a session itself, or a data channel closes with no error, a clean close by the remote included. A signaling send that succeeds, over HTTP included, reports 0, which the library reports as `None` (1.26.60). |
 | `FAILED_TO_CREATE_PEER_CONNECTION` (4) | The dialer or the listener cannot set up its peer connection (1.26.60). |
 | `ICE` (5) | The ICE connection state of either side turns `failed`. A session in state `failed` or `closed` is also swept, at most 5 s later. `disconnected` does not close it (1.26.60). |
 | `FAILED_TO_CREATE_OFFER` (10) | The dialer cannot create its offer (1.26.60). |

@@ -75,7 +75,7 @@ The close reasons (1.26.60):
 
 | `SessionError` | Value | Side | When |
 | --- | ---: | --- | --- |
-| `NONE` | 0 | both | the application closes the session, or a data channel closes with no error, whoever closed it (`transport.md` maps aiortc) |
+| success, reported as `None` | 0 | both | the application closes the session, or a data channel closes with no error, whoever closed it (`transport.md` maps aiortc) |
 | `FAILED_TO_CREATE_PEER_CONNECTION` | 4 | both | the peer connection or a data channel cannot be created |
 | `ICE` | 5 | both | ICE fails, or the sweep finds ICE failed or closed |
 | `FAILED_TO_CREATE_OFFER` | 10 | dialer | the offer cannot be created |
@@ -92,7 +92,7 @@ The close reasons (1.26.60):
 | the reported value | any | both | an HTTP send fails (Signaling channel) |
 
 - A session reports its close to the application once, with its `SessionError` and a JSON statistics summary, and closes its peer connection (1.26.60).
-- An application close removes the session and reports `NONE` (0). It returns false with no report when no session matches, so a second close of one session returns false (1.26.60).
+- An application close removes the session and reports 0, which the library reports as `None`. It returns false with no report when no session matches, so a second close of one session returns false (1.26.60).
 - BDS sends `CONNECTERROR` only to decline an offer (Accept), never on close. It sent none over LAN on idle, a silently cut socket, the peer's close, a game-layer disconnect or `stop`, and `stop` closed every session within 0.16 s (1.26.60).
 
 ## Application I/O

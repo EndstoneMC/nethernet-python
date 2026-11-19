@@ -361,7 +361,7 @@ async def test_listener_prefers_the_channel_its_offer_came_on():
 
 
 async def test_data_channel_close_code_comes_from_the_peer_connection():
-    for code in (SessionError.NONE, SessionError.DATA_CHANNEL_CLOSED):
+    for code in (None, SessionError.DATA_CHANNEL_CLOSED):
         recorder = Recorder()
         manager = make_manager(Channels(), recorder)
         await offer(manager)

@@ -47,7 +47,8 @@ class Transport:
         connection_flags: Returns the connection flags for a remote.
         identity: Signs each answer sent over HTTP.
         on_session_open: Called when a session connects.
-        on_session_close: Called when a session closes.
+        on_session_close: Called with the session, its error and a summary when it closes.
+            The error is ``None`` when the session closed without an error.
         on_packet: Called for each received packet.
         on_host_discovered: Called for each discovery response.
     """
@@ -75,7 +76,7 @@ class Transport:
         connection_flags: Callable[[NetworkID], ConnectionFlags] | None = None,
         identity: Callable[[str], str] | None = None,
         on_session_open: Callable[[Session], None] | None = None,
-        on_session_close: Callable[[Session, SessionError, str], None] | None = None,
+        on_session_close: Callable[[Session, SessionError | None, str], None] | None = None,
         on_packet: Callable[[Session, bytes], None] | None = None,
         on_host_discovered: Callable[[NetworkID, bytes, Address], None] | None = None,
     ) -> None:
@@ -189,11 +190,11 @@ class Transport:
     async def _on_http_signal(self, sender: NetworkID, message: str) -> None:
         await self._manager.handle_signal(sender, message, via_lan=False)
 
-    async def _http_send(self, remote: NetworkID, message: str) -> SessionError:
+    async def _http_send(self, remote: NetworkID, message: str) -> SessionError | None:
         base = self._bases.get(remote)
         if base is None:
             if self._http is not None and self._http.send(remote, message):
-                return SessionError.NONE
+                return None
             return SessionError.SIGNALING_UNICAST_MESSAGE_DELIVERY_FAILED
         try:
             response = await request_answer(
@@ -203,7 +204,7 @@ class Transport:
             return exc.error
         if response is not None:
             await self._manager.handle_signal(remote, response.serialize(), via_lan=False)
-        return SessionError.NONE
+        return None
 
     def _spawn(self, coroutine: Awaitable[None]) -> None:
         task = asyncio.ensure_future(coroutine)

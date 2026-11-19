@@ -371,7 +371,7 @@ async def test_close_is_reported_once_with_a_json_summary_and_closes_the_peer_co
     assert manager.close(REMOTE, CID) is True
     await settle()
     assert manager.close(REMOTE, CID) is False
-    assert recorder.errors() == [SessionError.NONE]
+    assert recorder.errors() == [None]
     assert isinstance(json.loads(recorder.closed[0][2]), dict)
     assert session.peer_connection.rtc.closed
     assert len(channels.lan) == sent
@@ -557,4 +557,4 @@ async def test_session_manager_is_an_async_context_manager():
     recorder = Recorder()
     async with make_manager(Channels(), recorder) as manager:
         await dial(manager)
-    assert recorder.errors() == [SessionError.NONE]
+    assert recorder.errors() == [None]

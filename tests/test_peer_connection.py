@@ -266,7 +266,7 @@ async def test_malformed_reliable_message_resets_the_reliable_stream_then_closes
     assert reliable.readyState in ("closing", "closed")
     assert unreliable.readyState == "open"
     await pc._close_task
-    assert closes == [SessionError.NONE]
+    assert closes == [None]
     assert pc._pc.connectionState == "closed"
     assert pc.peek() is None
 
@@ -282,7 +282,7 @@ async def test_one_byte_unreliable_message_resets_only_the_unreliable_stream():
     assert reliable.readyState == "open"
     assert pc._packets._partial
     await pc._close_task
-    assert closes == [SessionError.NONE]
+    assert closes == [None]
     assert pc.connection_state == "closed"
 
 
@@ -320,7 +320,7 @@ async def test_closing_the_peer_connection_reports_none_once_and_refuses_sends()
     pc = PeerConnection(is_dialer=True, on_close=closes.append)
     open_channel(pc)
     await pc.close()
-    assert closes == [SessionError.NONE]
+    assert closes == [None]
     assert pc.send(b"late", SendType.RELIABLE) is False
 
 
@@ -457,7 +457,7 @@ async def test_remote_stream_reset_closes_with_no_error():
     try:
         listener._reliable.channel.close()
         await asyncio.wait_for(closed.wait(), timeout=15)
-        assert closes == [SessionError.NONE]
+        assert closes == [None]
         assert dialer._pc.sctp.state == "connected"
     finally:
         await dialer.close()
@@ -482,7 +482,7 @@ async def test_clean_close_reports_none_locally_and_data_channel_closed_remotely
         dialer.send(b"hello", SendType.RELIABLE)
         await asyncio.sleep(0.2)
         await listener.close()
-        assert local == [SessionError.NONE]
+        assert local == [None]
         await asyncio.wait_for(closed.wait(), timeout=5)
         assert closes == [SessionError.DATA_CHANNEL_CLOSED]
     finally:
@@ -495,7 +495,7 @@ async def test_malformed_message_resets_the_stream_and_the_remote_sees_no_error(
         listener._reliable.channel.emit("message", b"\x00")
         assert listener._reliable.channel.readyState in ("closing", "closed")
         await asyncio.wait_for(closed.wait(), timeout=5)
-        assert closes == [SessionError.NONE]
+        assert closes == [None]
     finally:
         await dialer.close()
         await listener.close()
@@ -563,4 +563,4 @@ async def test_peer_abort_during_the_reset_wait_keeps_none():
     pc._pc.sctp._set_state(RTCSctpTransport.State.CLOSED)
     pc._handle_channel_close(pc._reliable)
     await pc._close_task
-    assert closes == [SessionError.NONE]
+    assert closes == [None]

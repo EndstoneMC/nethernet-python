@@ -15,7 +15,7 @@ from nethernet.signaling.messages import CandidateAdd, ConnectRequest, ConnectRe
 from nethernet.transport.peer_connection import PeerConnection, strip_candidates
 
 LanSend = Callable[[NetworkID, str], None]
-HttpSend = Callable[[NetworkID, str], Awaitable[SessionError]]
+HttpSend = Callable[[NetworkID, str], Awaitable[SessionError | None]]
 
 _IDENTITY_PREFIX = "a=identity:"
 _ACTIVE_ICE_STATES = frozenset({"connected", "completed", "disconnected"})
@@ -68,14 +68,15 @@ class SignalingChannels:
             return Route.HTTP
         return None
 
-    async def send(self, route: Route, remote_id: NetworkID, message: str) -> SessionError:
+    async def send(self, route: Route, remote_id: NetworkID, message: str) -> SessionError | None:
         if route is Route.LAN:
             if self.lan_send is not None:
                 self.lan_send(remote_id, message)
-            return SessionError.NONE
+            return None
         if self.http_send is None:
             return SessionError.NO_SIGNALING_CHANNEL
-        return SessionError(await self.http_send(remote_id, message))
+        error = await self.http_send(remote_id, message)
+        return None if error is None else SessionError(error)
 
 
 def identity_value(sdp: str) -> str | None:
@@ -248,7 +249,7 @@ class Session:
         negotiation_timeout: float = DEFAULT_NEGOTIATION_TIMEOUT,
         peer_connection_factory: Callable[..., PeerConnection] = PeerConnection,
         on_open: Callable[[Session], None] | None = None,
-        on_close: Callable[[Session, SessionError, str], None] | None = None,
+        on_close: Callable[[Session, SessionError | None, str], None] | None = None,
         on_packet: Callable[[Session, bytes], None] | None = None,
     ) -> None:
         self.connection_id = connection_id
@@ -409,7 +410,7 @@ class Session:
 
     async def _send_http(self, message: str) -> None:
         error = await self._channels.send(Route.HTTP, self.remote_id, message)
-        if error == SessionError.NONE or self._closed:
+        if error is None or self._closed:
             return
         if error == SessionError.SIGNALING_UNICAST_MESSAGE_DELIVERY_FAILED and not self.is_dialer:
             return
@@ -487,7 +488,7 @@ class Session:
         elif self.is_dialer and self._deadline is not None and now >= self._deadline:
             self.close(SessionError.NEGOTIATION_TIMEOUT_WAITING_FOR_RESPONSE)
 
-    def close(self, error: SessionError = SessionError.NONE) -> bool:
+    def close(self, error: SessionError | None = None) -> bool:
         if self._closed:
             return False
         self._closed = True
@@ -498,7 +499,9 @@ class Session:
         if self._pc is not None:
             self.close_task = self._loop.create_task(self._pc.close())
         if self._on_close is not None:
-            self._on_close(self, SessionError(error), self._stats.summary())
+            self._on_close(
+                self, None if error is None else SessionError(error), self._stats.summary()
+            )
         return True
 
     async def wait_closed(self) -> None:

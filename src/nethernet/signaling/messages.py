@@ -3,7 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import TypeAlias
 
-from nethernet.errors import SessionError
+from nethernet.errors import SessionError, decode_error, encode_error
 from nethernet.network_id import U64_MAX
 
 
@@ -41,10 +41,10 @@ class CandidateAdd:
 class ConnectError:
     IDENTIFIER = "CONNECTERROR"
     connection_id: int
-    error: SessionError
+    error: SessionError | None
 
     def serialize(self) -> str:
-        return f"{self.IDENTIFIER} {self.connection_id} {int(self.error)}"
+        return f"{self.IDENTIFIER} {self.connection_id} {encode_error(self.error)}"
 
 
 SignalingMessage: TypeAlias = ConnectRequest | ConnectResponse | CandidateAdd | ConnectError
@@ -117,6 +117,6 @@ def parse(message: str) -> SignalingMessage | None:
         code = _parse_error_code(data)
         if code is None:
             return None
-        return ConnectError(connection_id, SessionError(code))
+        return ConnectError(connection_id, decode_error(code))
 
     return cls(connection_id, data)

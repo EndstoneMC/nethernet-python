@@ -6,7 +6,6 @@ from enum import IntEnum, IntFlag
 class SessionError(IntEnum):
     """The error a session closes with, carried in ``CONNECTERROR`` and seen on close."""
 
-    NONE = 0
     DESTINATION_NOT_LOGGED_IN = 1
     NEGOTIATION_TIMEOUT = 2
     WRONG_TRANSPORT_VERSION = 3
@@ -50,12 +49,20 @@ class SessionError(IntEnum):
 
     @classmethod
     def _missing_(cls, value: object) -> SessionError | None:
-        if not isinstance(value, int) or isinstance(value, bool):
+        if not isinstance(value, int) or isinstance(value, bool) or value == 0:
             return None
         member = int.__new__(cls, value)
         member._name_ = "UNKNOWN"
         member._value_ = value
         return member
+
+
+def decode_error(code: int) -> SessionError | None:
+    return None if code == 0 else SessionError(code)
+
+
+def encode_error(error: SessionError | None) -> int:
+    return 0 if error is None else int(error)
 
 
 class SendType(IntEnum):
@@ -81,19 +88,26 @@ class NetherNetError(Exception):
     """Base class for every public NetherNet exception."""
 
 
-class ConnectionFailed(NetherNetError):  # noqa: N818 - websockets-style name
-    """``connect()`` never reached the connected state."""
+def _describe(error: SessionError | None) -> str:
+    return "no error (0)" if error is None else f"{error.name} ({int(error)})"
 
-    def __init__(self, error: SessionError | int) -> None:
-        error = SessionError(error)
+
+class ConnectionFailed(NetherNetError):  # noqa: N818 - websockets-style name
+    """``connect()`` never reached the connected state.
+
+    ``error`` is ``None`` when the session closed without an error.
+    """
+
+    def __init__(self, error: SessionError | int | None) -> None:
+        error = None if error is None else decode_error(int(error))
         self.error = error
-        super().__init__(f"connection failed: {error.name} ({int(error)})")
+        super().__init__(f"connection failed: {_describe(error)}")
 
 
 class ConnectionClosed(NetherNetError):  # noqa: N818 - websockets-style name
-    """The connection is closed. ``error`` is ``SessionError.NONE`` for a clean close."""
+    """The connection is closed. ``error`` is ``None`` for a clean close."""
 
-    def __init__(self, error: SessionError | int = SessionError.NONE) -> None:
-        error = SessionError(error)
+    def __init__(self, error: SessionError | int | None = None) -> None:
+        error = None if error is None else decode_error(int(error))
         self.error = error
-        super().__init__(f"connection closed: {error.name} ({int(error)})")
+        super().__init__(f"connection closed: {_describe(error)}")

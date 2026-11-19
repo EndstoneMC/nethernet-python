@@ -25,7 +25,7 @@ paths:
 - A closing coroutine is `close` or `aclose`, and the object is an async context manager.
 - Check an aiortc, aioice, aiohttp or cryptography API against its official reference for the installed version, never from memory.
 - Patch aioice or aiortc only under `transport/`, behind a feature check that skips the patch once the library fixes it, as `stun_integrity.install` checks `stun.Message.check_message_integrity`.
-- Public failures raise a `NetherNetError` subclass carrying `.error: SessionError`. A receive path drops what the rules say to drop and returns `None` or `False`, never raises.
+- Public failures raise a `NetherNetError` subclass carrying `.error: SessionError | None`. A receive path drops what the rules say to drop and returns `None` or `False`, never raises.
 
 ## Docstrings
 

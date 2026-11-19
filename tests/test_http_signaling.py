@@ -813,6 +813,7 @@ async def test_client_delivers_nothing_for_an_empty_2xx_body():
 @pytest.mark.parametrize(
     ("body", "expected"),
     [
+        (b"0", None),
         (b"37", SessionError.IDENTITY_NOT_ALLOWED),
         (b"36", SessionError.FAILED_TO_CREATE_IDENTITY_ASSERTION),
         (b"9999", 9999),

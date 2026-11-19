@@ -60,7 +60,7 @@ class SessionManager:
         connection_flags: Callable[[NetworkID], ConnectionFlags] | None = None,
         identity: Callable[[str], str] | None = None,
         on_session_open: Callable[[Session], None] | None = None,
-        on_session_close: Callable[[Session, SessionError, str], None] | None = None,
+        on_session_close: Callable[[Session, SessionError | None, str], None] | None = None,
         on_packet: Callable[[Session, bytes], None] | None = None,
         peer_connection_factory: Callable[..., PeerConnection] = PeerConnection,
     ) -> None:
@@ -259,7 +259,7 @@ class SessionManager:
         if self._on_session_open is not None:
             self._on_session_open(session)
 
-    def _handle_close(self, session: Session, error: SessionError, summary: str) -> None:
+    def _handle_close(self, session: Session, error: SessionError | None, summary: str) -> None:
         by_id = self._sessions.get(session.remote_id)
         if by_id is not None and by_id.get(session.connection_id) is session:
             del by_id[session.connection_id]
@@ -299,7 +299,7 @@ class SessionManager:
 
     def close(self, remote_id: NetworkID, connection_id: int) -> bool:
         session = self.get(remote_id, connection_id)
-        return session is not None and session.close(SessionError.NONE)
+        return session is not None and session.close()
 
     async def __aenter__(self) -> SessionManager:
         return self
@@ -313,7 +313,7 @@ class SessionManager:
             self._sweep_handle.cancel()
             self._sweep_handle = None
         for session in self.sessions:
-            session.close(SessionError.NONE)
+            session.close()
         for task in list(self._tasks):
             task.cancel()
         await asyncio.gather(*self._tasks, return_exceptions=True)

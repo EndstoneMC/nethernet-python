@@ -277,7 +277,7 @@ async def test_host_sees_the_client_close_as_a_data_channel_close():
         async with connect(f"{LOOPBACK}:{server.bound_port}", timeout=20) as conn:
             await conn.send(b"hello")
             assert await conn.recv() == b"hello"
-        assert await conn.wait_closed() is SessionError.NONE
+        assert await conn.wait_closed() is None
         await asyncio.wait_for(closed.wait(), 5)
     assert seen == [SessionError.DATA_CHANNEL_CLOSED]
 

@@ -134,7 +134,7 @@ class PeerConnection:
         on_ice_connected: Callable[[], None] | None = None,
         on_ice_failed: Callable[[], None] | None = None,
         on_fragment_size_change: Callable[[int], None] | None = None,
-        on_close: Callable[[SessionError], None] | None = None,
+        on_close: Callable[[SessionError | None], None] | None = None,
     ) -> None:
         self._relay_only = relay_only
         self._on_packet = on_packet
@@ -288,7 +288,7 @@ class PeerConnection:
         if self._on_ice_connected is not None:
             self._on_ice_connected()
 
-    def _report_close(self, error: SessionError) -> None:
+    def _report_close(self, error: SessionError | None) -> None:
         if self._close_reported:
             return
         self._close_reported = True
@@ -356,7 +356,7 @@ class PeerConnection:
         if not accepted:
             if self._close_task is not None:
                 return
-            self._report_close(SessionError.NONE)
+            self._report_close(None)
             reset = self._reset_channel(outbound)
             self._close_task = asyncio.ensure_future(self._close_after(reset))
             return
@@ -387,9 +387,7 @@ class PeerConnection:
         outbound.pending.clear()
         if outbound is self._reliable:
             self._packets.discard_partial()
-        self._report_close(
-            SessionError.DATA_CHANNEL_CLOSED if self._transport_failed() else SessionError.NONE
-        )
+        self._report_close(SessionError.DATA_CHANNEL_CLOSED if self._transport_failed() else None)
 
     def _transport_failed(self) -> bool:
         sctp = self._pc.sctp
@@ -435,6 +433,6 @@ class PeerConnection:
     async def close(self) -> None:
         self._closed = True
         try:
-            self._report_close(SessionError.NONE)
+            self._report_close(None)
         finally:
             await asyncio.shield(self._pc.close())

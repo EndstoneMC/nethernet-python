@@ -13,7 +13,7 @@ hosts = nethernet.discover(timeout=3)
 async with contextlib.aclosing(hosts):
     async for host in hosts:
         async with nethernet.connect(host) as conn:
-            await conn.send(b"Á...")
+            await conn.send(b"\x06\xc1...")
             print(await conn.recv())
         break
 ```
@@ -132,11 +132,11 @@ Failures raise exceptions rather than returning sentinels. All inherit from `Net
 | Exception | Raised when |
 | --- | --- |
 | `ConnectionFailed` | a dial never reached the connected state (`.error` carries the cause) |
-| `ConnectionClosed` | `send` / `recv` on a closed connection; `.error` is `NONE` when this end closed; a peer's close arrives as `DATA_CHANNEL_CLOSED` |
+| `ConnectionClosed` | `send` / `recv` on a closed connection; `.error` is `None` when the session closed without an error; a peer's close arrives as `DATA_CHANNEL_CLOSED` |
 | `InvalidIdentity` | an `a=identity` assertion is missing, malformed, or fails verification |
 
 `.error` is a `SessionError`, the same code Bedrock reports: negotiation timeouts, ICE
-failure, data-channel close.
+failure, data-channel close. It is `None` when the session closed without an error.
 
 ## Development
 

@@ -19,6 +19,7 @@ def test_messages_serialize_as_identifier_connection_id_and_data_joined_by_space
     assert ConnectResponse(123, SDP).serialize() == "CONNECTRESPONSE 123 " + SDP
     assert CandidateAdd(7, CANDIDATE).serialize() == "CANDIDATEADD 7 " + CANDIDATE
     assert ConnectError(7, SessionError.ICE).serialize() == "CONNECTERROR 7 5"
+    assert ConnectError(7, None).serialize() == "CONNECTERROR 7 0"
     assert ConnectError(0, SessionError(-1)).serialize() == "CONNECTERROR 0 -1"
 
 
@@ -79,7 +80,7 @@ def test_connection_id_without_digits_or_above_u64_is_dropped(token):
 
 
 def test_connect_error_reads_a_signed_value():
-    assert parse("CONNECTERROR 7 0") == ConnectError(7, SessionError.NONE)
+    assert parse("CONNECTERROR 7 0") == ConnectError(7, None)
     assert parse("CONNECTERROR 7 40") == ConnectError(7, SessionError.SERVER_FULL)
     assert parse("CONNECTERROR 7 -1") == ConnectError(7, SessionError(-1))
     assert parse("CONNECTERROR 7 2147483647") == ConnectError(7, SessionError(2147483647))

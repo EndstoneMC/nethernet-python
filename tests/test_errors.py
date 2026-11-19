@@ -6,10 +6,11 @@ from nethernet.errors import (
     ConnectionFlags,
     SendType,
     SessionError,
+    decode_error,
+    encode_error,
 )
 
 SESSION_ERRORS = [
-    "NONE",
     "DESTINATION_NOT_LOGGED_IN",
     "NEGOTIATION_TIMEOUT",
     "WRONG_TRANSPORT_VERSION",
@@ -53,8 +54,17 @@ SESSION_ERRORS = [
 ]
 
 
-def test_session_error_has_every_value_from_0_to_40_and_no_other():
-    assert [(e.value, e.name) for e in SessionError] == list(enumerate(SESSION_ERRORS))
+def test_session_error_has_every_value_from_1_to_40_and_no_other():
+    assert [(e.value, e.name) for e in SessionError] == list(enumerate(SESSION_ERRORS, 1))
+
+
+def test_zero_is_not_a_session_error():
+    with pytest.raises(ValueError):
+        SessionError(0)
+    assert decode_error(0) is None
+    assert decode_error(40) is SessionError.SERVER_FULL
+    assert encode_error(None) == 0
+    assert encode_error(SessionError.SERVER_FULL) == 40
 
 
 def test_send_type_values():
@@ -108,7 +118,8 @@ def test_a_plain_int_code_is_coerced_to_a_session_error(cls):
     assert unknown.error == 99
     assert "99" in str(unknown)
     assert cls(40).error is SessionError.SERVER_FULL
+    assert cls(0).error is None
 
 
 def test_connection_closed_defaults_to_none():
-    assert ConnectionClosed().error is SessionError.NONE
+    assert ConnectionClosed().error is None

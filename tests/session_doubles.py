@@ -204,7 +204,7 @@ class Channels:
 
     async def http_send(self, remote, message):
         self.http.append((remote, message))
-        return self.http_errors.pop(0) if self.http_errors else SessionError.NONE
+        return self.http_errors.pop(0) if self.http_errors else None
 
     def lan_messages(self):
         return [parse(message) for _, message in self.lan]

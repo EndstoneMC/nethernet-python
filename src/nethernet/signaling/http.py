@@ -10,7 +10,7 @@ from collections.abc import Awaitable, Callable
 import aiohttp
 
 from nethernet.constants import DEFAULT_NEGOTIATION_TIMEOUT
-from nethernet.errors import ConnectionFailed, SessionError
+from nethernet.errors import ConnectionFailed, SessionError, decode_error
 from nethernet.network_id import U64_MAX, NetworkID
 from nethernet.signaling.messages import ConnectResponse
 
@@ -216,7 +216,7 @@ def _answer_from_body(body: str) -> str:
     code = _signed_code(body)
     if code is None:
         raise ConnectionFailed(SessionError.SIGNALING_PARSING_FAILURE)
-    raise ConnectionFailed(SessionError(code))
+    raise ConnectionFailed(decode_error(code))
 
 
 async def request_answer(
