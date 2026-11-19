@@ -95,24 +95,27 @@ ADVERTISEMENT_PROTOCOL = 2225
 ADVERTISEMENT_VERSION = "1.26.60"
 NONCE_ROTATION_WINDOW = 300.0
 LAN_SIGNALING_CONNECTION = 4
+DEFAULT_SERVER_NAME = "Dedicated Server"
+DEFAULT_LEVEL_NAME = "Bedrock level"
+DEFAULT_MAX_PLAYERS = 10
 
 
 @dataclass(frozen=True, kw_only=True)
 class HostAdvertisement:
     data_version: int = ADVERTISEMENT_DATA_VERSION
-    name: str
+    name: str = DEFAULT_SERVER_NAME
     protocol: int = ADVERTISEMENT_PROTOCOL
     version: str = ADVERTISEMENT_VERSION
-    level: str
-    players: int
-    max_players: int
-    game_type: int
-    editor: bool
-    hardcore: bool
-    online_auth: bool
-    self_signed_auth: bool
+    level: str = DEFAULT_LEVEL_NAME
+    players: int = 0
+    max_players: int = DEFAULT_MAX_PLAYERS
+    game_type: int = 0
+    editor: bool = False
+    hardcore: bool = False
+    online_auth: bool = True
+    self_signed_auth: bool = True
     nonce: str
-    connection: int
+    connection: int = LAN_SIGNALING_CONNECTION
 
     def serialize(self) -> bytes:
         record = bytearray([self.data_version])

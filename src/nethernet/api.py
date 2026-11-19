@@ -15,7 +15,9 @@ from nethernet.constants import (
 )
 from nethernet.discovery.lan import LIMITED_BROADCAST, Address
 from nethernet.discovery.packets import (
-    LAN_SIGNALING_CONNECTION,
+    DEFAULT_LEVEL_NAME,
+    DEFAULT_MAX_PLAYERS,
+    DEFAULT_SERVER_NAME,
     AdvertisementNonce,
     HostAdvertisement,
 )
@@ -451,7 +453,6 @@ class Server:
             **self._fields,
             players=len(self._endpoint.conns),
             nonce=self._nonce.update(),
-            connection=LAN_SIGNALING_CONNECTION,
         )
         self._advertisement = advertisement.serialize()
         self._ping = None
@@ -491,14 +492,14 @@ def serve(
     lan_host: str = "",
     lan_port: int = DEFAULT_BROADCAST_PORT,
     application_id: int = DEFAULT_APPLICATION_ID,
-    name: str = "Dedicated Server",
-    level: str = "Bedrock level",
-    max_players: int = 10,
+    name: str = DEFAULT_SERVER_NAME,
+    level: str = DEFAULT_LEVEL_NAME,
+    max_players: int = DEFAULT_MAX_PLAYERS,
     game_type: int = 0,
     editor: bool = False,
     hardcore: bool = False,
-    online_auth: bool = False,
-    self_signed_auth: bool = False,
+    online_auth: bool = True,
+    self_signed_auth: bool = True,
     visible: bool = True,
     broadcast: bool = False,
     broadcast_host: str = LIMITED_BROADCAST,

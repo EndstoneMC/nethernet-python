@@ -175,3 +175,24 @@ def test_nonce_rotation_window_is_300_seconds():
 
 def test_each_nonce_source_starts_with_a_new_nonce():
     assert AdvertisementNonce().value != AdvertisementNonce().value
+
+
+def test_default_advertisement_is_the_stock_bds_record():
+    advertisement = HostAdvertisement(nonce="1234567890abcdef")
+    assert advertisement.data_version == 7
+    assert advertisement.name == "Dedicated Server"
+    assert advertisement.protocol == 2225
+    assert advertisement.version == "1.26.60"
+    assert advertisement.level == "Bedrock level"
+    assert advertisement.players == 0
+    assert advertisement.max_players == 10
+    assert advertisement.game_type == 0
+    assert advertisement.editor is False
+    assert advertisement.hardcore is False
+    assert advertisement.online_auth is True
+    assert advertisement.self_signed_auth is True
+    assert advertisement.connection == 4
+    record = advertisement.serialize()
+    assert len(record) == 134
+    assert len(bytes.fromhex(record.decode())) == 67
+    assert HostAdvertisement.parse(record) == advertisement
