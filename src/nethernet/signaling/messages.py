@@ -1,13 +1,3 @@
-"""Signaling message codec — SPEC.md s5.2-s5.3.
-
-Every signaling message is an ASCII string of exactly three space-separated tokens::
-
-    <IDENTIFIER> <connectionId> <data>
-
-The ``data`` token may itself contain spaces and newlines (SDP blobs do), so parsing splits on
-the **first two spaces only** and treats the remainder as ``data``.
-"""
-
 from __future__ import annotations
 
 from dataclasses import dataclass
@@ -19,8 +9,6 @@ from nethernet.network_id import U64_MAX
 
 @dataclass(frozen=True)
 class ConnectRequest:
-    """Dialer -> listener: the offerer's full SDP offer (SPEC.md s5.3)."""
-
     IDENTIFIER = "CONNECTREQUEST"
     connection_id: int
     sdp: str
@@ -31,8 +19,6 @@ class ConnectRequest:
 
 @dataclass(frozen=True)
 class ConnectResponse:
-    """Listener -> dialer: the answerer's full SDP answer (SPEC.md s5.3)."""
-
     IDENTIFIER = "CONNECTRESPONSE"
     connection_id: int
     sdp: str
@@ -43,8 +29,6 @@ class ConnectResponse:
 
 @dataclass(frozen=True)
 class CandidateAdd:
-    """Both directions: one trickle ICE candidate (the ``candidate:`` value) (SPEC.md s5.3-s5.4)."""
-
     IDENTIFIER = "CANDIDATEADD"
     connection_id: int
     candidate: str
@@ -55,11 +39,9 @@ class CandidateAdd:
 
 @dataclass(frozen=True)
 class ConnectError:
-    """Either direction: an ``SessionError`` as decimal ASCII (SPEC.md s5.3)."""
-
     IDENTIFIER = "CONNECTERROR"
     connection_id: int
-    error: int  # a SessionError when known; kept as int to tolerate unknown future codes
+    error: SessionError
 
     def serialize(self) -> str:
         return f"{self.IDENTIFIER} {self.connection_id} {int(self.error)}"
@@ -75,16 +57,39 @@ _BY_IDENTIFIER = {
 }
 
 
-def _parse_u64(token: str) -> int | None:
-    """A bare unsigned decimal in u64 range (no sign, no whitespace), else None."""
-    if not token or not token.isascii() or not all(c in "0123456789" for c in token):
+_I32_MIN = -(2**31)
+_I32_MAX = 2**31 - 1
+
+_DIGITS = frozenset("0123456789")
+
+
+def _digit_prefix(text: str) -> str | None:
+    end = 0
+    while end < len(text) and text[end] in _DIGITS:
+        end += 1
+    if end == 0:
         return None
-    value = int(token)
+    return text[:end].lstrip("0") or "0"
+
+
+def _parse_connection_id(token: str) -> int | None:
+    digits = _digit_prefix(token)
+    if digits is None or len(digits) > 20:
+        return None
+    value = int(digits)
     return value if value <= U64_MAX else None
 
 
+def _parse_error_code(data: str) -> int | None:
+    negative = data[:1] == "-"
+    digits = _digit_prefix(data[1:] if negative else data)
+    if digits is None or len(digits) > 10:
+        return None
+    value = -int(digits) if negative else int(digits)
+    return value if _I32_MIN <= value <= _I32_MAX else None
+
+
 def _tokenize(message: str) -> tuple[str, str, str] | None:
-    """Split on the first two spaces; the remainder is ``data``. None if <3 tokens."""
     first = message.find(" ")
     if first == -1:
         return None
@@ -95,7 +100,6 @@ def _tokenize(message: str) -> tuple[str, str, str] | None:
 
 
 def parse(message: str) -> SignalingMessage | None:
-    """Parse a signaling string into a message, or None if it must be rejected (SPEC.md s5.2)."""
     tokens = _tokenize(message)
     if tokens is None:
         return None
@@ -105,26 +109,14 @@ def parse(message: str) -> SignalingMessage | None:
     if cls is None:
         return None
 
-    connection_id = _parse_u64(connection_token)
+    connection_id = _parse_connection_id(connection_token)
     if connection_id is None:
         return None
 
     if cls is ConnectError:
-        error = _parse_int(data)
-        if error is None:
+        code = _parse_error_code(data)
+        if code is None:
             return None
-        try:
-            error = SessionError(error)
-        except ValueError:
-            pass  # tolerate codes outside the known enum
-        return ConnectError(connection_id, error)
+        return ConnectError(connection_id, SessionError(code))
 
     return cls(connection_id, data)
-
-
-def _parse_int(token: str) -> int | None:
-    """A signed decimal integer (the CONNECTERROR code), else None."""
-    body = token[1:] if token[:1] == "-" else token
-    if not body or not all(c in "0123456789" for c in body):
-        return None
-    return int(token)

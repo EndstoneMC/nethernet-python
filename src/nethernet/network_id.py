@@ -1,23 +1,23 @@
-"""NetworkID and ConnectionId identifiers — SPEC.md s3.
-
-A ``NetworkID`` identifies a peer and is one of: **P2P** (a ``u64`` rendered as decimal),
-**Realms** (a 128-bit UUID), or *unset*. LAN signaling and discovery always use the P2P form.
-
-A ``ConnectionId`` / ``RAWNETWORKID`` is a separate ``u64`` used as the per-session id in
-signaling messages (SPEC.md s3.3); it is just an ``int`` here, minted by ``new_connection_id``.
-"""
-
 from __future__ import annotations
 
+import math
 import secrets
 import uuid as _uuid
 from dataclasses import dataclass
 from enum import Enum
 
 U64_MAX = 0xFFFFFFFFFFFFFFFF
+_I64_MIN = -(2**63)
+_I64_MAX = 2**63 - 1
+
+_DIGITS = frozenset("0123456789")
+_HEX_DIGITS = frozenset("0123456789abcdefABCDEF")
+_DASH_OFFSETS = (8, 13, 18, 23)
 
 
 class NetworkIDType(Enum):
+    """The form of a ``NetworkID``: unset, P2P or Realms."""
+
     UNSET = 0
     P2P = 1
     REALMS = 2
@@ -25,13 +25,11 @@ class NetworkIDType(Enum):
 
 @dataclass(frozen=True)
 class NetworkID:
-    """A peer identity: P2P (u64), Realms (UUID), or unset."""
+    """A peer identity: a P2P ``u64``, a Realms UUID, or unset."""
 
     type: NetworkIDType
     value: int = 0
     uuid: _uuid.UUID | None = None
-
-    # -- constructors ------------------------------------------------------------------
 
     @classmethod
     def p2p(cls, value: int) -> NetworkID:
@@ -49,25 +47,41 @@ class NetworkID:
 
     @classmethod
     def parse(cls, text: str) -> NetworkID:
-        """Parse a string per SPEC.md s3.2: decimal u64 -> P2P, else UUID -> Realms, else unset."""
-        # 1. Unsigned decimal integer with no surrounding whitespace, in u64 range -> P2P.
-        if text and all(c in "0123456789" for c in text):
-            value = int(text)
-            if value <= U64_MAX:
-                return cls.p2p(value)
-        # 2. Parseable UUID -> Realms.
-        try:
-            return cls.realms(_uuid.UUID(text))
-        except (ValueError, AttributeError):
-            pass
-        # 3. Otherwise unset / invalid.
+        if not text:
+            return cls.unset()
+        if all(c in _DIGITS for c in text):
+            digits = text.lstrip("0") or "0"
+            if len(digits) <= 20 and int(digits) <= U64_MAX:
+                return cls.p2p(int(digits))
+        hex_text = _uuid_hex(text)
+        if hex_text is not None:
+            return cls.realms(_uuid.UUID(int=int(hex_text, 16)))
         return cls.unset()
 
-    # -- queries -----------------------------------------------------------------------
+    @classmethod
+    def from_json(cls, value: object) -> NetworkID:
+        if isinstance(value, int) and _I64_MIN <= value <= U64_MAX:
+            return cls.p2p(value & U64_MAX)
+        if isinstance(value, int | float):
+            return cls.p2p(_real_low_32_bits(float(value)))
+        if isinstance(value, str):
+            return cls.parse(value)
+        return cls.unset()
+
+    def to_json(self) -> int | str | None:
+        if self.type is NetworkIDType.P2P:
+            return self.value
+        if self.type is NetworkIDType.REALMS:
+            return str(self.uuid)
+        return None
 
     @property
     def is_valid(self) -> bool:
-        return self.type is not NetworkIDType.UNSET
+        if self.type is NetworkIDType.P2P:
+            return self.value != 0
+        if self.type is NetworkIDType.REALMS:
+            return self.uuid is not None and self.uuid.int != 0
+        return False
 
     def __str__(self) -> str:
         if self.type is NetworkIDType.P2P:
@@ -77,16 +91,33 @@ class NetworkID:
         return ""
 
     def correlation_id(self) -> str:
-        """Diagnostic id ``<nethernet>WWWW-WWWW-WWWW-WWWW`` (MSW first) — SPEC.md s3.4.
-
-        Never appears on the wire. Defined for the P2P form.
-        """
-        if self.type is not NetworkIDType.P2P:
-            raise ValueError("correlation_id is only defined for P2P NetworkIDs")
+        if not self.is_valid:
+            return ""
+        if self.type is NetworkIDType.REALMS:
+            return f"<nethernet>{self.uuid}"
         words = [(self.value >> shift) & 0xFFFF for shift in (48, 32, 16, 0)]
         return "<nethernet>" + "-".join(f"{w:04x}" for w in words)
 
 
+def _real_low_32_bits(value: float) -> int:
+    if not math.isfinite(value):
+        return 0
+    truncated = math.trunc(value)
+    if not _I64_MIN <= truncated <= _I64_MAX:
+        return 0
+    return truncated & 0xFFFFFFFF
+
+
+def _uuid_hex(text: str) -> str | None:
+    if len(text) == 36:
+        if any(text[i] != "-" for i in _DASH_OFFSETS):
+            return None
+        text = text.replace("-", "")
+    if len(text) == 32 and all(c in _HEX_DIGITS for c in text):
+        return text
+    return None
+
+
 def new_connection_id() -> int:
-    """Mint a fresh, unpredictable u64 ConnectionId / RAWNETWORKID — SPEC.md s3.3."""
-    return secrets.randbits(64)
+    """Draw a fresh random ``u64`` connection id."""
+    return int.from_bytes(secrets.token_bytes(8), "little")
