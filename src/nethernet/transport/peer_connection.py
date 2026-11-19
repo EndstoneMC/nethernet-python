@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import re
 from collections import deque
 from collections.abc import Callable
@@ -24,6 +25,7 @@ MAX_MESSAGE_SIZE = 262144
 DEFAULT_MAX_MESSAGE_SIZE = 65536
 MAX_ICE_SERVERS = 16
 MAX_SEND_QUEUE_SIZE = 16 * 1024 * 1024
+CLOSE_TIMEOUT = 3.0
 
 _MAX_MESSAGE_SIZE_LINE = re.compile(r"^a=max-message-size:(\d+)\s*$", re.MULTILINE)
 
@@ -148,6 +150,7 @@ class PeerConnection:
         self._unreliable = _Outbound()
         self._packets = PacketQueue(self._reliable.send, self._unreliable.send)
         self._channels_open_fired = False
+        self._channels_ready = asyncio.Event()
         self._ice_connected = False
         self._close_reported = False
         self._closed = False
@@ -330,13 +333,13 @@ class PeerConnection:
         outbound.flush()
         if (
             self._channels_open_fired
-            or self._closed
             or not self._channel_open(self._reliable)
             or not self._channel_open(self._unreliable)
         ):
             return
         self._channels_open_fired = True
-        if self._on_channels_open is not None:
+        self._channels_ready.set()
+        if not self._closed and self._on_channels_open is not None:
             self._on_channels_open()
 
     @staticmethod
@@ -412,5 +415,43 @@ class PeerConnection:
         return self._packets.max_packet_size
 
     async def close(self) -> None:
+        already_closed = self._closed
         self._closed = True
-        await self._pc.close()
+        try:
+            if not already_closed:
+                await self._await_channels()
+                await self._close_channels()
+        finally:
+            await self._pc.close()
+
+    async def _await_channels(self) -> None:
+        if self._channels_ready.is_set() or self._pc.iceConnectionState not in (
+            "checking",
+            "connected",
+            "completed",
+        ):
+            return
+        try:
+            await asyncio.wait_for(self._channels_ready.wait(), CLOSE_TIMEOUT)
+        except TimeoutError:
+            pass
+
+    async def _close_channels(self) -> None:
+        loop = asyncio.get_running_loop()
+        waits: list[asyncio.Future[None]] = []
+        for outbound in (self._reliable, self._unreliable):
+            channel = outbound.channel
+            if channel is None or channel.readyState == "closed":
+                continue
+            done = loop.create_future()
+            channel.on("close", lambda done=done: done.done() or done.set_result(None))
+            waits.append(done)
+            outbound.closing = True
+            outbound.pending.clear()
+            if channel.readyState != "closing":
+                channel.close()
+        if waits:
+            try:
+                await asyncio.wait_for(asyncio.gather(*waits), CLOSE_TIMEOUT)
+            except TimeoutError:
+                pass

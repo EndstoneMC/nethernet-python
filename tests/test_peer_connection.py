@@ -450,8 +450,61 @@ async def test_remote_stream_reset_closes_with_no_error():
 async def test_remote_sctp_abort_closes_with_data_channel_closed():
     dialer, listener, closed, closes = await connect_and_record_close()
     try:
-        await listener.close()
+        await listener._pc.sctp.stop()
         await asyncio.wait_for(closed.wait(), timeout=15)
         assert closes == [SessionError.DATA_CHANNEL_CLOSED]
     finally:
         await dialer.close()
+
+
+async def test_clean_close_after_an_exchange_gives_the_remote_no_error():
+    dialer, listener, closed, closes = await connect_and_record_close()
+    try:
+        dialer.send(b"hello", SendType.RELIABLE)
+        await asyncio.sleep(0.2)
+        await listener.close()
+        await asyncio.wait_for(closed.wait(), timeout=5)
+        assert closes == [SessionError.NONE]
+    finally:
+        await dialer.close()
+
+
+async def test_close_right_after_connect_reaches_the_remote_with_no_error():
+    closed = asyncio.Event()
+    closes: list[SessionError] = []
+
+    def on_close(error):
+        closes.append(error)
+        closed.set()
+
+    dialer, listener, *_ = await connect_pair(on_close=on_close)
+    try:
+        await listener.close()
+        await asyncio.wait_for(closed.wait(), timeout=5)
+        assert closes == [SessionError.NONE]
+    finally:
+        await dialer.close()
+
+
+async def test_close_cancelled_mid_wait_still_closes_the_peer_connection():
+    dialer, listener, *_ = await connect_pair()
+    try:
+        task = asyncio.ensure_future(listener.close())
+        await asyncio.sleep(0)
+        task.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await task
+        assert listener._pc.connectionState == "closed"
+    finally:
+        await dialer.close()
+
+
+async def test_channels_opening_after_close_fire_no_open_callback():
+    opened: list[bool] = []
+    pc = PeerConnection(is_dialer=True, on_channels_open=lambda: opened.append(True))
+    closing = asyncio.ensure_future(pc.close())
+    await asyncio.sleep(0)
+    open_channel(pc)
+    open_channel(pc, reliable=False)
+    await closing
+    assert opened == []
