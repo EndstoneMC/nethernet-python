@@ -27,7 +27,8 @@ MAX_ICE_SERVERS = 16
 MAX_SEND_QUEUE_SIZE = 16 * 1024 * 1024
 RESET_TIMEOUT = 1.0
 
-_MAX_MESSAGE_SIZE_LINE = re.compile(r"^a=max-message-size:(\d+)\s*$", re.MULTILINE)
+_MAX_MESSAGE_SIZE_LINE = re.compile(r"^a=max-message-size:(.*?)\r?$", re.MULTILINE)
+_SIGNED_DECIMAL = re.compile(r"-?[0-9]+")
 
 stun_integrity.install()
 
@@ -46,7 +47,19 @@ def set_max_message_size(sdp: str, value: int = MAX_MESSAGE_SIZE) -> str:
 
 def remote_max_message_size(sdp: str) -> int:
     match = _MAX_MESSAGE_SIZE_LINE.search(sdp)
-    return int(match.group(1)) if match else DEFAULT_MAX_MESSAGE_SIZE
+    if match is None:
+        return DEFAULT_MAX_MESSAGE_SIZE
+    text = match.group(1).split(":", 1)[0]
+    if _SIGNED_DECIMAL.fullmatch(text) is None:
+        raise ValueError(text)
+    value = int(text)
+    if not -(2**31) <= value < 2**31:
+        raise ValueError(text)
+    return value
+
+
+def negotiate_max_message_size(local: int, remote: int) -> int:
+    return local if remote == 0 else min(local, remote)
 
 
 def answer_max_message_size(offer_value: int) -> int:
@@ -156,6 +169,7 @@ class PeerConnection:
         self._closed = False
 
         self._remote_sdp: str | None = None
+        self._local_max_message_size = MAX_MESSAGE_SIZE
         self._pending_candidates: deque[RTCIceCandidate] = deque()
 
         try:
@@ -244,12 +258,14 @@ class PeerConnection:
 
     async def _set_remote_description(self, sdp: str, kind: str) -> None:
         try:
+            remote_max_message_size(sdp)
             await self._pc.setRemoteDescription(RTCSessionDescription(sdp, kind))
         except Exception as exc:
             raise ConnectionFailed(SessionError.FAILED_TO_SET_REMOTE_DESCRIPTION) from exc
         self._remote_sdp = sdp
 
     def _local_sdp(self, max_message_size: int, identity: Callable[[str], str] | None) -> str:
+        self._local_max_message_size = max_message_size
         try:
             sdp = set_max_message_size(self._pc.localDescription.sdp, max_message_size)
             if self._relay_only:
@@ -280,7 +296,13 @@ class PeerConnection:
             return
         self._ice_connected = True
         previous = self._packets.fragment_size
-        size = remote_max_message_size(self._remote_sdp) if self._remote_sdp else None
+        size = (
+            negotiate_max_message_size(
+                self._local_max_message_size, remote_max_message_size(self._remote_sdp)
+            )
+            if self._remote_sdp
+            else None
+        )
         if not self._packets.update_fragment_size(size):
             self._report_close(SessionError.INVALID_ARGUMENT)
             return

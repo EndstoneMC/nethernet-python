@@ -16,6 +16,7 @@ from nethernet.transport.peer_connection import (
     candidate_to_message,
     ice_configuration,
     keep_only_relay_candidates,
+    negotiate_max_message_size,
     remote_max_message_size,
     set_max_message_size,
 )
@@ -60,6 +61,46 @@ def test_set_max_message_size_inserts_when_absent():
 def test_remote_max_message_size_is_read_from_the_sdp():
     assert remote_max_message_size("a=sctp-port:5000\r\na=max-message-size:65536\r\n") == 65536
     assert remote_max_message_size("a=sctp-port:5000\r\n") == 65536
+
+
+def test_remote_max_message_size_reads_zero_and_negative_values():
+    assert remote_max_message_size("a=max-message-size:0\r\n") == 0
+    assert remote_max_message_size("a=max-message-size:-5\r\n") == -5
+
+
+@pytest.mark.parametrize(
+    "text",
+    ["abc", "1.5", "", "-", "+5", "0x10", "2147483648", "-2147483649", "\u0662\u0666", "5 ", "5\t"]
+    + ["5\r", "5\x00", ":9"],
+)
+def test_remote_max_message_size_rejects_a_value_that_is_not_a_signed_32_bit_decimal(text):
+    with pytest.raises(ValueError):
+        remote_max_message_size(f"a=max-message-size:{text}\r\n")
+
+
+@pytest.mark.parametrize(
+    ("text", "expected"),
+    [("5:9", 5), ("007", 7), ("-007", -7), ("2147483647", 2**31 - 1), ("-2147483648", -(2**31))],
+)
+def test_remote_max_message_size_reads_the_first_field_in_decimal(text, expected):
+    assert remote_max_message_size(f"a=max-message-size:{text}\r\n") == expected
+
+
+def test_remote_max_message_size_strips_exactly_one_trailing_carriage_return():
+    assert remote_max_message_size("a=max-message-size:5\r\n") == 5
+    assert remote_max_message_size("a=max-message-size:5\n") == 5
+    with pytest.raises(ValueError):
+        remote_max_message_size("a=max-message-size:5\r\r\n")
+
+
+@pytest.mark.parametrize(
+    ("local", "remote", "expected"),
+    [(262144, 0, 262144), (262144, 65536, 65536), (65536, 262144, 65536), (262144, -3, -3)],
+)
+def test_negotiated_max_message_size_is_the_local_value_for_zero_else_the_signed_minimum(
+    local, remote, expected
+):
+    assert negotiate_max_message_size(local, remote) == expected
 
 
 def test_max_message_size_of_65536_omits_the_line():
@@ -261,7 +302,7 @@ async def test_malformed_reliable_message_resets_the_reliable_stream_then_closes
     pc = PeerConnection(is_dialer=True, on_close=closes.append)
     reliable = open_channel(pc)
     unreliable = open_channel(pc, reliable=False)
-    reliable.emit("message", b"AB")
+    reliable.emit("message", b"\x01AB")
     reliable.emit("message", b"\x00")
     assert reliable.readyState in ("closing", "closed")
     assert unreliable.readyState == "open"
@@ -271,13 +312,14 @@ async def test_malformed_reliable_message_resets_the_reliable_stream_then_closes
     assert pc.peek() is None
 
 
-async def test_one_byte_unreliable_message_resets_only_the_unreliable_stream():
-    closes: list[SessionError] = []
+@pytest.mark.parametrize("message", [b"", b"\x05"])
+async def test_zero_or_one_byte_unreliable_message_resets_only_the_unreliable_stream(message):
+    closes: list[SessionError | None] = []
     pc = PeerConnection(is_dialer=True, on_close=closes.append)
     reliable = open_channel(pc)
     unreliable = open_channel(pc, reliable=False)
-    reliable.emit("message", b"AB")
-    unreliable.emit("message", b"")
+    reliable.emit("message", b"\x01AB")
+    unreliable.emit("message", message)
     assert unreliable.readyState in ("closing", "closed")
     assert reliable.readyState == "open"
     assert pc._packets._partial
@@ -324,7 +366,9 @@ async def test_closing_the_peer_connection_reports_none_once_and_refuses_sends()
     assert pc.send(b"late", SendType.RELIABLE) is False
 
 
-async def connect_pair(rewrite_answer=None, **dialer_callbacks):
+async def connect_pair(
+    rewrite_answer=None, rewrite_offer=None, listener_callbacks=None, **dialer_callbacks
+):
     dialer_open = asyncio.Event()
     listener_open = asyncio.Event()
     dialer_recv: asyncio.Queue[bytes] = asyncio.Queue()
@@ -336,10 +380,15 @@ async def connect_pair(rewrite_answer=None, **dialer_callbacks):
         **dialer_callbacks,
     )
     listener = PeerConnection(
-        is_dialer=False, on_packet=listener_recv.put_nowait, on_channels_open=listener_open.set
+        is_dialer=False,
+        on_packet=listener_recv.put_nowait,
+        on_channels_open=listener_open.set,
+        **(listener_callbacks or {}),
     )
     offer = await dialer.create_offer()
     assert "a=max-message-size:262144" in offer
+    if rewrite_offer is not None:
+        offer = rewrite_offer(offer)
     answer = await listener.create_answer(offer)
     if rewrite_answer is not None:
         answer = rewrite_answer(answer)
@@ -567,7 +616,7 @@ async def test_peer_abort_during_the_reset_wait_keeps_none():
 
 
 async def test_ice_failed_reports_ice_once():
-    closes: list[SessionError] = []
+    closes: list[SessionError | None] = []
     pc = PeerConnection(is_dialer=True, on_close=closes.append)
     try:
         pc._handle_ice_state("failed")
@@ -578,7 +627,7 @@ async def test_ice_failed_reports_ice_once():
 
 
 async def test_ice_failed_after_another_reason_reports_nothing_more():
-    closes: list[SessionError] = []
+    closes: list[SessionError | None] = []
     pc = PeerConnection(is_dialer=True, on_close=closes.append)
     try:
         open_channel(pc).emit("message", b"\x00")
@@ -587,3 +636,102 @@ async def test_ice_failed_after_another_reason_reports_nothing_more():
         await pc._close_task
     finally:
         await pc.close()
+
+
+async def test_remote_max_message_size_of_zero_gives_the_local_fragment_size():
+    connected = asyncio.Event()
+    sizes: list[int] = []
+    dialer, listener, *_ = await connect_pair(
+        lambda sdp: set_max_message_size(sdp, 0),
+        on_ice_connected=connected.set,
+        on_fragment_size_change=sizes.append,
+    )
+    try:
+        await asyncio.wait_for(connected.wait(), timeout=20)
+        assert sizes == []
+        assert dialer.fragment_size == FRAGMENT_SIZE
+    finally:
+        await dialer.close()
+        await listener.close()
+
+
+async def test_remote_max_message_size_above_the_local_value_is_capped_by_it():
+    connected = asyncio.Event()
+    dialer, listener, *_ = await connect_pair(
+        lambda sdp: set_max_message_size(sdp, 1048576), on_ice_connected=connected.set
+    )
+    try:
+        await asyncio.wait_for(connected.wait(), timeout=20)
+        assert dialer.fragment_size == FRAGMENT_SIZE
+    finally:
+        await dialer.close()
+        await listener.close()
+
+
+async def test_negative_remote_max_message_size_closes_with_invalid_argument():
+    closed = asyncio.Event()
+    closes: list[SessionError | None] = []
+
+    def on_close(error):
+        closes.append(error)
+        closed.set()
+
+    dialer, listener, *_ = await connect_pair(
+        lambda sdp: set_max_message_size(sdp, -4), on_close=on_close
+    )
+    try:
+        await asyncio.wait_for(closed.wait(), timeout=20)
+        assert closes == [SessionError.INVALID_ARGUMENT]
+    finally:
+        await dialer.close()
+        await listener.close()
+
+
+async def test_malformed_max_message_size_in_the_answer_fails_to_set_the_remote_description():
+    dialer = PeerConnection(is_dialer=True)
+    listener = PeerConnection(is_dialer=False)
+    try:
+        offer = await dialer.create_offer()
+        answer = await listener.create_answer(offer)
+        answer = answer.replace("a=max-message-size:262144", "a=max-message-size:big")
+        with pytest.raises(ConnectionFailed) as info:
+            await dialer.set_remote_answer(answer)
+        assert info.value.error == SessionError.FAILED_TO_SET_REMOTE_DESCRIPTION
+    finally:
+        await dialer.close()
+        await listener.close()
+
+
+async def test_listener_with_a_zero_max_message_size_offer_uses_the_local_fragment_size():
+    ready = asyncio.Event()
+    dialer, listener, *_ = await connect_pair(
+        rewrite_offer=lambda sdp: set_max_message_size(sdp, 0),
+        listener_callbacks={"on_ice_connected": ready.set},
+    )
+    try:
+        await asyncio.wait_for(ready.wait(), timeout=20)
+        assert listener.fragment_size == FRAGMENT_SIZE
+    finally:
+        await dialer.close()
+        await listener.close()
+
+
+async def test_listener_with_a_negative_max_message_size_offer_closes_with_invalid_argument():
+    closed = asyncio.Event()
+    closes: list[SessionError | None] = []
+
+    def on_close(error):
+        closes.append(error)
+        closed.set()
+
+    dialer = PeerConnection(is_dialer=True)
+    listener = PeerConnection(is_dialer=False, on_close=on_close)
+    try:
+        offer = set_max_message_size(await dialer.create_offer(), -4)
+        answer = await listener.create_answer(offer)
+        await dialer.set_remote_answer(answer)
+        await asyncio.wait_for(closed.wait(), timeout=20)
+        assert closes == [SessionError.INVALID_ARGUMENT]
+    finally:
+        await dialer.close()
+        await listener.close()
