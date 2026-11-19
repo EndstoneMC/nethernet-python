@@ -1,15 +1,3 @@
-"""Application packet framing and fragmentation — SPEC.md s6.3-s6.4.
-
-Each data-channel message is a fragment ``[header: u8][payload]`` where ``header`` is the count
-of fragments that follow this one (the final fragment of a packet always has ``header == 0``).
-Unreliable packets are never fragmented. A reassembled packet is queued FIFO for the reader.
-
-This layer is transport-agnostic: outbound fragments go to injected send callbacks and inbound
-fragments arrive via ``on_reliable_message`` / ``on_unreliable_message``. Reliable reassembly
-relies on the underlying channel being ordered and reliable (SCTP), so no sequence numbers are
-carried beyond the countdown header.
-"""
-
 from __future__ import annotations
 
 from collections import deque
@@ -17,42 +5,62 @@ from collections.abc import Callable
 
 from nethernet.errors import SendType
 
-FRAGMENT_SIZE = 0x3FFFF  # 262143 (SPEC.md s6.3)
-MAX_PACKET_SIZE = 0x3FBFF01  # max single reliable packet, i.e. <= 256 fragments
+FRAGMENT_SIZE = 0x3FFFF
+MAX_FRAGMENTS = 255
+MAX_PACKET_SIZE = MAX_FRAGMENTS * FRAGMENT_SIZE
 
 
 class PacketQueue:
-    """Fragments outbound packets and reassembles inbound ones into a FIFO receive queue."""
-
     def __init__(
         self,
         send_reliable: Callable[[bytes], None],
         send_unreliable: Callable[[bytes], None],
+        *,
+        fragment_size: int = FRAGMENT_SIZE,
     ) -> None:
         self._send_reliable = send_reliable
         self._send_unreliable = send_unreliable
-        self._reassembly = bytearray()
+        self._fragment_size = fragment_size
+        self._partial = bytearray()
+        self._expected_header: int | None = None
         self._received: deque[bytes] = deque()
 
-    # -- sending -----------------------------------------------------------------------
+    @property
+    def fragment_size(self) -> int:
+        return self._fragment_size
+
+    @property
+    def max_packet_size(self) -> int:
+        return MAX_FRAGMENTS * self._fragment_size
+
+    def update_fragment_size(self, max_message_size: int | None) -> bool:
+        if max_message_size is None:
+            return True
+        if max_message_size <= 1:
+            return False
+        self._fragment_size = max_message_size - 1
+        return True
 
     def push(self, data: bytes, send_type: SendType) -> bool:
-        """Fragment and send a packet. Returns False if it was dropped (SPEC.md s6.3)."""
+        if send_type not in (SendType.RELIABLE, SendType.UNRELIABLE):
+            return False
         size = len(data)
-        if size < FRAGMENT_SIZE + 1:
+        if size == 0:
+            return False
+        fragment_size = self._fragment_size
+        if size <= fragment_size:
             self._send_fragment(0, data, send_type)
             return True
-        if size > MAX_PACKET_SIZE:
-            return False  # too large
+        if size > MAX_FRAGMENTS * fragment_size:
+            return False
         if send_type != SendType.RELIABLE:
-            return False  # multi-fragment packets must not go on the unreliable channel
-        fragments = (size - 1) // FRAGMENT_SIZE + 1
+            return False
+        fragments = (size - 1) // fragment_size + 1
         offset = 0
         while fragments:
-            fragments -= 1  # header counts down: fragments-1 ... 0
-            chunk = data[offset : offset + FRAGMENT_SIZE]
-            self._send_fragment(fragments, chunk, SendType.RELIABLE)
-            offset += FRAGMENT_SIZE
+            fragments -= 1
+            self._send_fragment(fragments, data[offset : offset + fragment_size], SendType.RELIABLE)
+            offset += fragment_size
         return True
 
     def _send_fragment(self, header: int, payload: bytes, send_type: SendType) -> None:
@@ -62,36 +70,38 @@ class PacketQueue:
         else:
             self._send_unreliable(fragment)
 
-    # -- receiving ---------------------------------------------------------------------
-
-    def on_reliable_message(self, data: bytes) -> None:
-        """Reassemble an ordered fragment; deliver the packet when header == 0."""
-        if len(data) == 0:
-            return
+    def on_reliable_message(self, data: bytes) -> bool:
+        if len(data) <= 1:
+            self.discard_partial()
+            return False
         header = data[0]
-        self._reassembly.extend(data[1:])
+        if self._expected_header is not None and header != self._expected_header:
+            self.discard_partial()
+            return False
+        self._partial.extend(data[1:])
         if header == 0:
-            self._received.append(bytes(self._reassembly))
-            self._reassembly.clear()
+            self._received.append(bytes(self._partial))
+            self.discard_partial()
+        else:
+            self._expected_header = header - 1
+        return True
 
-    def on_unreliable_message(self, data: bytes) -> None:
-        """An unordered message is a whole packet; strip the header and deliver."""
-        if len(data) == 0:
-            return
+    def on_unreliable_message(self, data: bytes) -> bool:
+        if len(data) <= 1:
+            return False
         self._received.append(bytes(data[1:]))
+        return True
+
+    def discard_partial(self) -> None:
+        self._partial.clear()
+        self._expected_header = None
 
     def peek(self) -> int | None:
-        """Size of the head packet, or None if the queue is empty (SPEC.md s6.4)."""
         if not self._received:
             return None
         return len(self._received[0])
 
     def read(self, max_size: int | None = None) -> bytes | None:
-        """Read the head packet (SPEC.md s6.4).
-
-        With ``max_size`` smaller than the head packet, return that prefix and leave the
-        remainder at the head; otherwise dequeue and return the whole packet. None if empty.
-        """
         if not self._received:
             return None
         head = self._received[0]

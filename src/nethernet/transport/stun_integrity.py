@@ -1,5 +1,3 @@
-"""Ignore STUN responses that fail MESSAGE-INTEGRITY, as libwebrtc's StunRequestManager does."""
-
 from __future__ import annotations
 
 from aioice import ice, stun
@@ -8,7 +6,13 @@ _original_request = ice.StunProtocol.request
 _original_datagram_received = ice.StunProtocol.datagram_received
 
 
-async def _request(self, request, addr, integrity_key=None, retransmissions=None):
+async def _request(
+    self: ice.StunProtocol,
+    request: stun.Message,
+    addr: tuple[str, int],
+    integrity_key: bytes | None = None,
+    retransmissions: int | None = None,
+) -> tuple[stun.Message, tuple[str, int]]:
     keys = self.__dict__.setdefault("integrity_keys", {})
     if integrity_key is not None:
         keys[request.transaction_id] = integrity_key
@@ -18,14 +22,14 @@ async def _request(self, request, addr, integrity_key=None, retransmissions=None
         keys.pop(request.transaction_id, None)
 
 
-def _datagram_received(self, data, addr):
+def _datagram_received(self: ice.StunProtocol, data: bytes, addr: tuple[str, int]) -> None:
     key = self.__dict__.get("integrity_keys", {}).get(bytes(data[8:20]))
     if key is not None and not _is_authentic(data, key):
         return
     _original_datagram_received(self, data, addr)
 
 
-def _is_authentic(data, key) -> bool:
+def _is_authentic(data: bytes, key: bytes) -> bool:
     try:
         message = stun.parse_message(data)
     except ValueError:

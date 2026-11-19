@@ -1,33 +1,47 @@
-"""aiortc PeerConnection wrapper — SPEC.md s6.1-s6.2, s4.
-
-The connect-and-exchange test runs a real loopback ICE/DTLS/SCTP handshake (a *medium* test).
-"""
-
 import asyncio
 
-from nethernet.errors import SendType
+import pytest
+from aiortc import RTCIceServer
+from aiortc.rtcsctptransport import RTCSctpTransport
+
+from nethernet.errors import ConnectionFailed, SendType, SessionError
+from nethernet.transport import peer_connection as peer_connection_module
 from nethernet.transport.framing import FRAGMENT_SIZE
 from nethernet.transport.peer_connection import (
+    MAX_ICE_SERVERS,
     MAX_MESSAGE_SIZE,
     PeerConnection,
+    answer_max_message_size,
     candidate_from_message,
     candidate_to_message,
+    ice_configuration,
     keep_only_relay_candidates,
+    remote_max_message_size,
     set_max_message_size,
 )
 
-
-async def wait_for(predicate, timeout=15.0):
-    loop = asyncio.get_event_loop()
-    deadline = loop.time() + timeout
-    while loop.time() < deadline:
-        if predicate():
-            return
-        await asyncio.sleep(0.02)
-    raise TimeoutError("condition not met in time")
+WEBRTC_BINARY = 53
+OFFER_WITHOUT_ICE_CREDENTIALS = (
+    "v=0\r\no=- 1 1 IN IP4 0.0.0.0\r\ns=-\r\nt=0 0\r\n"
+    "m=application 9 UDP/DTLS/SCTP webrtc-datachannel\r\nc=IN IP4 0.0.0.0\r\n"
+    "a=mid:0\r\na=sctp-port:5000\r\n"
+)
+HOST_CANDIDATE = "candidate:1 1 udp 2130706431 10.0.0.5 54321 typ host generation 0"
 
 
-# --- SDP munging (SPEC.md s6.1) ---
+async def next_packet(packets):
+    return await asyncio.wait_for(packets.get(), timeout=15)
+
+
+def open_channel(pc, reliable=True):
+    channel = (pc._reliable if reliable else pc._unreliable).channel
+    channel._setReadyState("open")
+    return channel
+
+
+def sent_payloads(channel):
+    queue = channel.transport._data_channel_queue
+    return [item[2] for item in queue if item[0] is channel and item[1] == WEBRTC_BINARY]
 
 
 def test_set_max_message_size_replaces_existing_value():
@@ -43,18 +57,66 @@ def test_set_max_message_size_inserts_when_absent():
     assert "a=max-message-size:262144\r\n" in out
 
 
-def test_max_message_size_constant_matches_spec():
-    assert MAX_MESSAGE_SIZE == 262144
+def test_remote_max_message_size_is_read_from_the_sdp():
+    assert remote_max_message_size("a=sctp-port:5000\r\na=max-message-size:65536\r\n") == 65536
+    assert remote_max_message_size("a=sctp-port:5000\r\n") == 65536
 
 
-# --- Candidate translation (SPEC.md s5.4 / s12) ---
+def test_max_message_size_of_65536_omits_the_line():
+    sdp = "a=sctp-port:5000\r\na=max-message-size:262144\r\n"
+    assert set_max_message_size(sdp, 65536) == "a=sctp-port:5000\r\n"
+
+
+def test_answer_advertises_the_smaller_of_the_offer_value_and_262144():
+    assert answer_max_message_size(65536) == 65536
+    assert answer_max_message_size(100000) == 100000
+    assert answer_max_message_size(262144) == 262144
+    assert answer_max_message_size(1000000) == 262144
+    assert answer_max_message_size(0) == 262144
+    assert answer_max_message_size(-1) == 262144
+
+
+async def test_listener_answer_takes_its_max_message_size_from_the_offer():
+    dialer = PeerConnection(is_dialer=True)
+    try:
+        offer = await dialer.create_offer()
+        for offered, answered in ((100000, 100000), (1000000, 262144), (0, 262144)):
+            listener = PeerConnection(is_dialer=False)
+            try:
+                answer = await listener.create_answer(set_max_message_size(offer, offered))
+                assert remote_max_message_size(answer) == answered
+            finally:
+                await listener.close()
+        listener = PeerConnection(is_dialer=False)
+        try:
+            answer = await listener.create_answer(set_max_message_size(offer, 65536))
+            assert "a=max-message-size:" not in answer
+        finally:
+            await listener.close()
+    finally:
+        await dialer.close()
+
+
+def test_no_ice_servers_passes_an_explicit_empty_list():
+    assert ice_configuration(None).iceServers == []
+    assert ice_configuration([]).iceServers == []
+
+
+def test_ice_servers_are_capped_at_sixteen():
+    servers = [RTCIceServer(f"turn:relay{i}.example:3478", "u", "p") for i in range(20)]
+    assert MAX_ICE_SERVERS == 16
+    assert ice_configuration(servers).iceServers == servers[:16]
+
+
+def test_no_trickle_peer_clears_every_ice_server():
+    servers = [RTCIceServer("turn:relay.example:3478", "u", "p")]
+    assert ice_configuration(servers, trickle=False).iceServers == []
 
 
 def test_candidate_message_roundtrip_handles_prefix():
-    text = "candidate:1 1 udp 2130706431 10.0.0.5 54321 typ host generation 0"
-    candidate = candidate_from_message(text)
-    # candidate_from_sdp must see no prefix -> foundation is "1", not "candidate:1".
+    candidate = candidate_from_message(HOST_CANDIDATE)
     assert candidate.foundation == "1"
+    assert candidate.sdpMid is None
     assert candidate.sdpMLineIndex == 0
     again = candidate_to_message(candidate)
     assert again.startswith("candidate:")
@@ -82,44 +144,314 @@ async def test_relay_only_offer_advertises_no_host_candidates():
         await pc.close()
 
 
-# --- End-to-end in-process connect + exchange (SPEC.md s6) ---
-
-
-async def test_in_process_connect_and_exchange():
-    dialer_open = asyncio.Event()
-    listener_open = asyncio.Event()
-    dialer_recv: list[bytes] = []
-    listener_recv: list[bytes] = []
-
-    dialer = PeerConnection(
-        is_dialer=True, on_packet=dialer_recv.append, on_channels_open=dialer_open.set
-    )
-    listener = PeerConnection(
-        is_dialer=False, on_packet=listener_recv.append, on_channels_open=listener_open.set
-    )
+async def test_offer_is_non_trickle_and_advertises_the_full_max_message_size():
+    pc = PeerConnection(is_dialer=True)
     try:
+        offer = await pc.create_offer()
+        assert pc._pc.iceGatheringState == "complete"
+        assert "a=candidate:" in offer
+        assert remote_max_message_size(pc._pc.localDescription.sdp) < MAX_MESSAGE_SIZE
+        assert remote_max_message_size(offer) == MAX_MESSAGE_SIZE
+    finally:
+        await pc.close()
+
+
+async def test_remote_candidate_waits_until_both_descriptions_are_set():
+    dialer = PeerConnection(is_dialer=True)
+    listener = PeerConnection(is_dialer=False)
+    try:
+        await dialer.add_remote_candidate(HOST_CANDIDATE)
+        assert len(dialer._pending_candidates) == 1
         offer = await dialer.create_offer()
-        assert "a=max-message-size:262144" in offer
+        assert len(dialer._pending_candidates) == 1
+
+        await listener.add_remote_candidate(HOST_CANDIDATE)
         answer = await listener.create_answer(offer)
+        assert len(listener._pending_candidates) == 0
+
         await dialer.set_remote_answer(answer)
-
-        await asyncio.wait_for(
-            asyncio.gather(dialer_open.wait(), listener_open.wait()), timeout=20
-        )
-
-        # Reliable single-fragment, dialer -> listener.
-        dialer.send(b"hello", SendType.RELIABLE)
-        await wait_for(lambda: listener_recv == [b"hello"])
-
-        # Reliable multi-fragment (262144 bytes) must reassemble intact (the reliable/ordered path).
-        big = bytes(i % 256 for i in range(FRAGMENT_SIZE + 1))
-        dialer.send(big, SendType.RELIABLE)
-        await wait_for(lambda: len(listener_recv) == 2)
-        assert listener_recv[1] == big
-
-        # Unreliable single-fragment, listener -> dialer (selects the unreliable channel by label).
-        listener.send(b"pong", SendType.UNRELIABLE)
-        await wait_for(lambda: dialer_recv == [b"pong"])
+        assert len(dialer._pending_candidates) == 0
     finally:
         await dialer.close()
         await listener.close()
+
+
+async def test_malformed_remote_candidate_is_dropped():
+    pc = PeerConnection(is_dialer=True)
+    try:
+        await pc.add_remote_candidate("candidate:garbage")
+        assert len(pc._pending_candidates) == 0
+    finally:
+        await pc.close()
+
+
+async def test_offer_without_ice_credentials_fails_to_set_the_remote_description():
+    pc = PeerConnection(is_dialer=False)
+    try:
+        with pytest.raises(ConnectionFailed) as info:
+            await pc.create_answer(OFFER_WITHOUT_ICE_CREDENTIALS)
+        assert info.value.error == SessionError.FAILED_TO_SET_REMOTE_DESCRIPTION
+    finally:
+        await pc.close()
+
+
+async def test_answer_without_an_offer_fails_to_set_the_remote_description():
+    dialer = PeerConnection(is_dialer=True)
+    try:
+        with pytest.raises(ConnectionFailed) as info:
+            await dialer.set_remote_answer("not an sdp")
+        assert info.value.error == SessionError.FAILED_TO_SET_REMOTE_DESCRIPTION
+    finally:
+        await dialer.close()
+
+
+async def test_identity_hook_extends_the_offer():
+    pc = PeerConnection(is_dialer=True)
+    try:
+        offer = await pc.create_offer(identity=lambda sdp: sdp + "a=identity:x\r\n")
+        assert offer.endswith("a=identity:x\r\n")
+    finally:
+        await pc.close()
+
+
+async def test_identity_failure_fails_to_create_the_identity_assertion():
+    def fail(_sdp):
+        raise ValueError("no key")
+
+    pc = PeerConnection(is_dialer=True)
+    try:
+        with pytest.raises(ConnectionFailed) as info:
+            await pc.create_offer(identity=fail)
+        assert info.value.error == SessionError.FAILED_TO_CREATE_IDENTITY_ASSERTION
+    finally:
+        await pc.close()
+
+
+async def test_fragment_sent_before_its_channel_opens_goes_out_in_order_once_it_opens():
+    pc = PeerConnection(is_dialer=True)
+    try:
+        assert pc.send(b"one", SendType.RELIABLE) is True
+        assert pc.send(b"two", SendType.RELIABLE) is True
+        channel = pc._reliable.channel
+        assert sent_payloads(channel) == []
+        open_channel(pc)
+        assert sent_payloads(channel) == [b"\x00one", b"\x00two"]
+    finally:
+        await pc.close()
+
+
+async def test_full_send_queue_holds_fragments_until_the_buffered_amount_drops(monkeypatch):
+    monkeypatch.setattr(peer_connection_module, "MAX_SEND_QUEUE_SIZE", 10)
+    pc = PeerConnection(is_dialer=True)
+    try:
+        channel = open_channel(pc)
+        assert pc.send(b"abcd", SendType.RELIABLE) is True
+        assert pc.send(b"efgh", SendType.RELIABLE) is True
+        assert pc.send(b"ij", SendType.RELIABLE) is True
+        assert sent_payloads(channel) == [b"\x00abcd", b"\x00efgh"]
+        assert channel.bufferedAmount == 10
+        channel._addBufferedAmount(-5)
+        assert sent_payloads(channel) == [b"\x00abcd", b"\x00efgh", b"\x00ij"]
+    finally:
+        await pc.close()
+
+
+async def test_malformed_reliable_message_closes_the_channel_with_no_error():
+    closes: list[SessionError] = []
+    pc = PeerConnection(is_dialer=True, on_close=closes.append)
+    try:
+        channel = open_channel(pc)
+        channel.emit("message", b"\x01AB")
+        channel.emit("message", b"\x00")
+        assert channel.readyState == "closed"
+        assert closes == [SessionError.NONE]
+        assert pc.peek() is None
+    finally:
+        await pc.close()
+
+
+async def test_malformed_unreliable_message_closes_the_unreliable_channel():
+    closes: list[SessionError] = []
+    pc = PeerConnection(is_dialer=True, on_close=closes.append)
+    try:
+        channel = open_channel(pc, reliable=False)
+        channel.emit("message", b"")
+        assert channel.readyState == "closed"
+        assert closes == [SessionError.NONE]
+    finally:
+        await pc.close()
+
+
+async def test_channel_close_after_the_sctp_transport_closed_reports_data_channel_closed_once():
+    closes: list[SessionError] = []
+    pc = PeerConnection(is_dialer=True, on_close=closes.append)
+    try:
+        reliable = open_channel(pc)
+        unreliable = open_channel(pc, reliable=False)
+        reliable.emit("message", b"\x01AB")
+        pc._pc.sctp._set_state(RTCSctpTransport.State.CLOSED)
+        reliable._setReadyState("closed")
+        unreliable._setReadyState("closed")
+        assert closes == [SessionError.DATA_CHANNEL_CLOSED]
+        assert pc.peek() is None
+    finally:
+        await pc.close()
+
+
+async def test_closing_the_peer_connection_reports_nothing_and_refuses_sends():
+    closes: list[SessionError] = []
+    pc = PeerConnection(is_dialer=True, on_close=closes.append)
+    open_channel(pc)
+    await pc.close()
+    assert closes == []
+    assert pc.send(b"late", SendType.RELIABLE) is False
+
+
+async def connect_pair(rewrite_answer=None, **dialer_callbacks):
+    dialer_open = asyncio.Event()
+    listener_open = asyncio.Event()
+    dialer_recv: asyncio.Queue[bytes] = asyncio.Queue()
+    listener_recv: asyncio.Queue[bytes] = asyncio.Queue()
+    dialer = PeerConnection(
+        is_dialer=True,
+        on_packet=dialer_recv.put_nowait,
+        on_channels_open=dialer_open.set,
+        **dialer_callbacks,
+    )
+    listener = PeerConnection(
+        is_dialer=False, on_packet=listener_recv.put_nowait, on_channels_open=listener_open.set
+    )
+    offer = await dialer.create_offer()
+    assert "a=max-message-size:262144" in offer
+    answer = await listener.create_answer(offer)
+    if rewrite_answer is not None:
+        answer = rewrite_answer(answer)
+    await dialer.set_remote_answer(answer)
+    return dialer, listener, dialer_open, listener_open, dialer_recv, listener_recv
+
+
+async def test_in_process_connect_and_exchange():
+    connected = asyncio.Event()
+    sizes: list[int] = []
+    dialer, listener, dialer_open, listener_open, dialer_recv, listener_recv = await connect_pair(
+        on_ice_connected=connected.set, on_fragment_size_change=sizes.append
+    )
+    try:
+        await asyncio.wait_for(
+            asyncio.gather(connected.wait(), dialer_open.wait(), listener_open.wait()), timeout=20
+        )
+        assert dialer.ice_connection_state == "completed"
+        for pc in (dialer, listener):
+            assert pc._reliable.channel.label == "ReliableDataChannel"
+            assert pc._reliable.channel.ordered is True
+            assert pc._unreliable.channel.label == "UnreliableDataChannel"
+            assert pc._unreliable.channel.ordered is False
+            assert pc._unreliable.channel.maxRetransmits == 0
+        assert dialer.fragment_size == FRAGMENT_SIZE
+        assert sizes == []
+
+        dialer.send(b"hello", SendType.RELIABLE)
+        assert await next_packet(listener_recv) == b"hello"
+
+        big = bytes(i % 256 for i in range(FRAGMENT_SIZE + 1))
+        dialer.send(big, SendType.RELIABLE)
+        assert await next_packet(listener_recv) == big
+
+        listener.send(b"pong", SendType.UNRELIABLE)
+        assert await next_packet(dialer_recv) == b"pong"
+    finally:
+        await dialer.close()
+        await listener.close()
+
+
+async def test_ice_connected_takes_the_fragment_size_from_the_remote_max_message_size():
+    connected = asyncio.Event()
+    sizes: list[int] = []
+    dialer, listener, *_ = await connect_pair(
+        lambda sdp: set_max_message_size(sdp, 65536),
+        on_ice_connected=connected.set,
+        on_fragment_size_change=sizes.append,
+    )
+    try:
+        await asyncio.wait_for(connected.wait(), timeout=20)
+        assert sizes == [65535]
+        assert dialer.fragment_size == 65535
+        assert dialer.max_packet_size == 255 * 65535
+    finally:
+        await dialer.close()
+        await listener.close()
+
+
+async def test_ice_connected_with_a_max_message_size_of_one_closes_with_invalid_argument():
+    closed = asyncio.Event()
+    closes: list[SessionError] = []
+    connected: list[bool] = []
+
+    def on_close(error):
+        closes.append(error)
+        closed.set()
+
+    dialer, listener, *_ = await connect_pair(
+        lambda sdp: set_max_message_size(sdp, 1),
+        on_ice_connected=lambda: connected.append(True),
+        on_close=on_close,
+    )
+    try:
+        await asyncio.wait_for(closed.wait(), timeout=20)
+        assert closes == [SessionError.INVALID_ARGUMENT]
+        assert connected == []
+        assert dialer.fragment_size == FRAGMENT_SIZE
+    finally:
+        await dialer.close()
+        await listener.close()
+
+
+async def test_candidate_pair_is_none_until_a_pair_is_selected():
+    dialer, listener, dialer_open, listener_open, *_ = await connect_pair()
+    try:
+        assert dialer.candidate_pair() is None
+        await asyncio.wait_for(asyncio.gather(dialer_open.wait(), listener_open.wait()), timeout=20)
+        pair = dialer.candidate_pair()
+        assert pair is not None
+        assert pair["local"].startswith("candidate:") and " typ " in pair["local"]
+        assert pair["remote"].startswith("candidate:") and " typ " in pair["remote"]
+        assert pair["state"] == "succeeded"
+        assert set(pair) == {"local", "remote", "state", "rtt", "responses_received"}
+    finally:
+        await dialer.close()
+        await listener.close()
+
+
+async def connect_and_record_close():
+    closed = asyncio.Event()
+    closes: list[SessionError] = []
+
+    def on_close(error):
+        closes.append(error)
+        closed.set()
+
+    dialer, listener, dialer_open, listener_open, *_ = await connect_pair(on_close=on_close)
+    await asyncio.wait_for(asyncio.gather(dialer_open.wait(), listener_open.wait()), timeout=20)
+    return dialer, listener, closed, closes
+
+
+async def test_remote_stream_reset_closes_with_no_error():
+    dialer, listener, closed, closes = await connect_and_record_close()
+    try:
+        listener._reliable.channel.close()
+        await asyncio.wait_for(closed.wait(), timeout=15)
+        assert closes == [SessionError.NONE]
+        assert dialer._pc.sctp.state == "connected"
+    finally:
+        await dialer.close()
+        await listener.close()
+
+
+async def test_remote_sctp_abort_closes_with_data_channel_closed():
+    dialer, listener, closed, closes = await connect_and_record_close()
+    try:
+        await listener.close()
+        await asyncio.wait_for(closed.wait(), timeout=15)
+        assert closes == [SessionError.DATA_CHANNEL_CLOSED]
+    finally:
+        await dialer.close()
