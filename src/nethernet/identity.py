@@ -1,55 +1,79 @@
-"""SDP identity assertion mechanics — NetherNet Onboarding Guide s5.
-
-Envelope crypto only: parse/strip/insert ``a=identity``, the canonical fingerprint payload,
-the detached JWS over it, and the self-signed server JWT carrying ``cpk``. Policy — validating
-a GameServerToken against the auth service, authorization decisions, TOFU pin storage — stays
-with the application.
-
-The ``cpk`` claim is serialized as base64 DER SubjectPublicKeyInfo (the guide leaves the format
-implementation-defined; this matches Minecraft's public-key convention).
-
-cryptography API verified against the official reference:
-https://cryptography.io/en/latest/hazmat/primitives/asymmetric/ec/
-"""
-
 from __future__ import annotations
 
 import base64
-import hashlib
+import binascii
 import json
+import re
 import time
+from collections.abc import Callable
 from dataclasses import dataclass
 
-from cryptography.exceptions import InvalidSignature
+from cryptography.exceptions import InvalidSignature, UnsupportedAlgorithm
 from cryptography.hazmat.primitives import hashes, serialization
-from cryptography.hazmat.primitives.asymmetric import ec
+from cryptography.hazmat.primitives.asymmetric import ec, padding, rsa
 from cryptography.hazmat.primitives.asymmetric.utils import (
     decode_dss_signature,
     encode_dss_signature,
 )
 
-from nethernet.errors import NetherNetError
+from nethernet.errors import ConnectionFailed, NetherNetError, SessionError
 
 
 class InvalidIdentity(NetherNetError):  # noqa: N818 - matches ConnectionFailed/ConnectionClosed
-    """An ``a=identity`` assertion is missing, malformed, or fails verification."""
+    """An ``a=identity`` assertion that is missing, malformed or fails verification.
+
+    Attributes:
+        error: Always ``SessionError.IDENTITY_NOT_ALLOWED``.
+    """
+
+    error = SessionError.IDENTITY_NOT_ALLOWED
 
 
-# JOSE ECDSA algorithms: name -> (curve, hash, coordinate size in bytes).
-_ALGORITHMS: dict[str, tuple[type[ec.EllipticCurve], type[hashes.HashAlgorithm], int]] = {
-    "ES256": (ec.SECP256R1, hashes.SHA256, 32),
-    "ES384": (ec.SECP384R1, hashes.SHA384, 48),
-    "ES512": (ec.SECP521R1, hashes.SHA512, 66),
+PublicKey = ec.EllipticCurvePublicKey | rsa.RSAPublicKey
+PrivateKey = ec.EllipticCurvePrivateKey | rsa.RSAPrivateKey
+
+IDENTITY_PREFIX = "a=identity:"
+FINGERPRINT_PREFIX = "a=fingerprint:"
+OPERATOR_DOMAIN = "self"
+IDP_PROTOCOL = "default"
+OPERATOR_ALG = "ES384"
+OPERATOR_TOKEN_LIFETIME = 60
+SELF_SIGNED_PLAYER_ISSUER = "self"
+MAX_TOKEN_SIZE = 16384
+MAX_JWS_SIZE = 16384
+
+_HASHES: dict[str, type[hashes.HashAlgorithm]] = {
+    "256": hashes.SHA256,
+    "384": hashes.SHA384,
+    "512": hashes.SHA512,
 }
+_EC_ALGORITHMS: dict[str, tuple[type[ec.EllipticCurve], int]] = {
+    "ES256": (ec.SECP256R1, 32),
+    "ES384": (ec.SECP384R1, 48),
+    "ES512": (ec.SECP521R1, 66),
+}
+_RSA_ALGORITHMS = ("RS256", "RS384", "RS512")
+_JWK_CURVES = {"P-256": "ES256", "P-384": "ES384", "P-521": "ES512"}
+_FIELD_PRIMES = {
+    "P-256": 2**256 - 2**224 + 2**192 + 2**96 - 1,
+    "P-384": 2**384 - 2**128 - 2**96 + 2**32 - 1,
+    "P-521": 2**521 - 1,
+}
+_RSA_MODULUS_BYTES = (128, 256, 512)
+_BASE64URL_DIGITS = re.compile(r"[A-Za-z0-9+/_-]*")
+_BASE64_DIGITS = re.compile(r"[A-Za-z0-9+/]*")
+_TO_STANDARD_ALPHABET = str.maketrans("-_", "+/")
 
 
 def generate_operator_key() -> ec.EllipticCurvePrivateKey:
-    """Generate a long-lived operator keypair (P-384, signs as ES384)."""
+    """Generate a long-lived P-384 operator key that signs as ES384."""
     return ec.generate_private_key(ec.SECP384R1())
 
 
-def _alg_for_key(key: ec.EllipticCurvePrivateKey | ec.EllipticCurvePublicKey) -> str:
-    for alg, (curve_cls, _, _) in _ALGORITHMS.items():
+def _alg_for_key(key: PrivateKey | PublicKey) -> str:
+    if isinstance(key, rsa.RSAPrivateKey | rsa.RSAPublicKey):
+        return "RS256"
+    for alg, (curve_cls, _) in _EC_ALGORITHMS.items():
         if isinstance(key.curve, curve_cls):
             return alg
     raise InvalidIdentity(f"unsupported curve {key.curve.name!r}")
@@ -59,300 +83,541 @@ def _b64url(data: bytes) -> str:
     return base64.urlsafe_b64encode(data).decode().rstrip("=")
 
 
+def _decode_digits(digits: str) -> bytes:
+    digits = digits.translate(_TO_STANDARD_ALPHABET)
+    if len(digits) % 4 == 1:
+        digits = digits[:-1]
+    data = base64.b64decode(digits + "=" * (-len(digits) % 4))
+    if not data:
+        raise InvalidIdentity("empty base64 value")
+    return data
+
+
 def _unb64url(text: str) -> bytes:
+    return _decode_digits(_BASE64URL_DIGITS.match(text).group())
+
+
+def _strict_b64decode(text: str) -> bytes:
     try:
-        return base64.urlsafe_b64decode(text + "=" * (-len(text) % 4))
-    except ValueError:
-        raise InvalidIdentity("invalid base64url") from None
+        data = base64.b64decode(text, validate=True)
+    except (binascii.Error, ValueError):
+        raise InvalidIdentity("invalid base64") from None
+    if base64.b64encode(data).decode() != text:
+        raise InvalidIdentity("invalid base64")
+    return data
 
 
-def _canonical_json(obj: object) -> bytes:
-    """RFC 8785 subset per the guide: sorted keys, no whitespace, minimal escaping."""
-    return json.dumps(obj, sort_keys=True, separators=(",", ":"), ensure_ascii=False).encode()
+_NAMED_ESCAPES = {
+    '"': '\\"',
+    "\\": "\\\\",
+    "\b": "\\b",
+    "\t": "\\t",
+    "\n": "\\n",
+    "\f": "\\f",
+    "\r": "\\r",
+}
 
 
-# -- fingerprint payload (Guide s5.1 step 4) -------------------------------------------
+def _json_string(text: str) -> str:
+    out = ['"']
+    for char in text:
+        escaped = _NAMED_ESCAPES.get(char)
+        if escaped is not None:
+            out.append(escaped)
+        elif ord(char) < 0x20:
+            out.append(f"\\u{ord(char):04X}")
+        else:
+            out.append(char)
+    out.append('"')
+    return "".join(out)
+
+
+def canonical_json(value: object) -> str:
+    if isinstance(value, dict):
+        members = sorted(value.items(), key=lambda item: item[0])
+        return "{" + ",".join(f"{_json_string(k)}:{canonical_json(v)}" for k, v in members) + "}"
+    if isinstance(value, list | tuple):
+        return "[" + ",".join(canonical_json(item) for item in value) + "]"
+    if isinstance(value, str):
+        return _json_string(value)
+    if value is True:
+        return "true"
+    if value is False:
+        return "false"
+    if value is None:
+        return "null"
+    if isinstance(value, int | float):
+        return json.dumps(value)
+    raise TypeError(f"cannot encode {type(value).__name__} as JSON")
+
+
+def _json_object(data: bytes | str) -> dict:
+    try:
+        value = json.loads(data)
+    except (ValueError, RecursionError):
+        raise InvalidIdentity("malformed JSON") from None
+    if not isinstance(value, dict):
+        raise InvalidIdentity("JSON is not an object")
+    return value
+
+
+def _line_texts(sdp: str) -> list[str]:
+    lines = sdp.split("\n")
+    if lines and lines[-1] == "":
+        lines.pop()
+    return [line[:-1] if line.endswith("\r") else line for line in lines]
+
+
+def _split_keepends(sdp: str) -> list[str]:
+    parts = sdp.split("\n")
+    lines = [part + "\n" for part in parts[:-1]]
+    if parts[-1]:
+        lines.append(parts[-1])
+    return lines
+
+
+def _has_prefix(line: str, prefix: str) -> bool:
+    return line[: len(prefix)].lower() == prefix
+
+
+def fingerprint_entries(sdp: str) -> list[tuple[str, str]]:
+    entries = []
+    for line in _line_texts(sdp):
+        if not _has_prefix(line, FINGERPRINT_PREFIX):
+            continue
+        algorithm, _, digest = line[len(FINGERPRINT_PREFIX) :].partition(" ")
+        if algorithm and digest:
+            entries.append((algorithm, digest))
+    entries.sort(key=lambda entry: (entry[0].encode(), entry[1].encode()))
+    return entries
 
 
 def fingerprint_payload(sdp: str) -> bytes:
-    """Canonical JSON over every ``a=fingerprint`` line of an SDP, in order."""
-    entries = []
-    for line in sdp.splitlines():
-        stripped = line.strip()
-        if stripped.startswith("a=fingerprint:"):
-            algorithm, _, digest = stripped[len("a=fingerprint:") :].partition(" ")
-            entries.append({"algorithm": algorithm, "digest": digest})
-    return _canonical_json({"fingerprint": entries})
+    entries = [{"algorithm": a, "digest": d} for a, d in fingerprint_entries(sdp)]
+    return canonical_json({"fingerprint": entries}).encode()
 
 
-# -- raw JOSE ECDSA signatures (r || s, fixed width) -----------------------------------
-
-
-def _sign_raw(private_key: ec.EllipticCurvePrivateKey, alg: str, data: bytes) -> bytes:
-    _, hash_cls, size = _ALGORITHMS[alg]
-    r, s = decode_dss_signature(private_key.sign(data, ec.ECDSA(hash_cls())))
+def _sign(private_key: PrivateKey, alg: str, data: bytes) -> bytes:
+    hash_algorithm = _HASHES[alg[2:]]()
+    if isinstance(private_key, rsa.RSAPrivateKey):
+        return private_key.sign(data, padding.PKCS1v15(), hash_algorithm)
+    _, size = _EC_ALGORITHMS[alg]
+    r, s = decode_dss_signature(private_key.sign(data, ec.ECDSA(hash_algorithm)))
     return r.to_bytes(size, "big") + s.to_bytes(size, "big")
 
 
-def _verify_raw(
-    public_key: ec.EllipticCurvePublicKey, alg: str, data: bytes, signature: bytes
-) -> bool:
-    _, hash_cls, size = _ALGORITHMS[alg]
-    if len(signature) != 2 * size:
-        return False
-    r = int.from_bytes(signature[:size], "big")
-    s = int.from_bytes(signature[size:], "big")
-    try:
-        public_key.verify(encode_dss_signature(r, s), data, ec.ECDSA(hash_cls()))
-    except InvalidSignature:
-        return False
-    return True
+def _verify(public_key: PublicKey, alg: str, data: bytes, signature: bytes) -> bool:
+    if alg in _EC_ALGORITHMS:
+        curve_cls, _ = _EC_ALGORITHMS[alg]
+        if not isinstance(public_key, ec.EllipticCurvePublicKey):
+            return False
+        half = len(signature) // 2
+        if not isinstance(public_key.curve, curve_cls) or half == 0:
+            return False
+        r = int.from_bytes(signature[:half], "big")
+        s = int.from_bytes(signature[half : 2 * half], "big")
+        try:
+            public_key.verify(encode_dss_signature(r, s), data, ec.ECDSA(_HASHES[alg[2:]]()))
+        except InvalidSignature:
+            return False
+        return True
+    if alg in _RSA_ALGORITHMS:
+        if not isinstance(public_key, rsa.RSAPublicKey):
+            return False
+        try:
+            public_key.verify(signature, data, padding.PKCS1v15(), _HASHES[alg[2:]]())
+        except InvalidSignature:
+            return False
+        return True
+    return False
 
 
-# -- detached fingerprints JWS (Guide s5.1 step 5 / s5.2) ------------------------------
+def _header_alg(header_b64: str) -> str:
+    alg = _json_object(_unb64url(header_b64)).get("alg")
+    if not isinstance(alg, str) or (alg not in _EC_ALGORITHMS and alg not in _RSA_ALGORITHMS):
+        raise InvalidIdentity(f"unsupported JWS alg {alg!r}")
+    return alg
 
 
-def sign_fingerprints(sdp: str, private_key: ec.EllipticCurvePrivateKey) -> str:
-    """Detached compact JWS (``header..signature``) over the canonical fingerprint payload."""
+def sign_fingerprints(sdp: str, private_key: PrivateKey) -> str:
+    if not fingerprint_entries(sdp):
+        raise ConnectionFailed(SessionError.FAILED_TO_CREATE_IDENTITY_ASSERTION)
     alg = _alg_for_key(private_key)
-    header = _b64url(_canonical_json({"alg": alg}))
+    header = _b64url(canonical_json({"alg": alg}).encode())
     payload = _b64url(fingerprint_payload(sdp))
-    signature = _sign_raw(private_key, alg, f"{header}.{payload}".encode())
+    signature = _sign(private_key, alg, f"{header}.{payload}".encode())
     return f"{header}..{_b64url(signature)}"
 
 
-def verify_fingerprints(sdp: str, jws: str, public_key: ec.EllipticCurvePublicKey) -> None:
-    """Verify a detached fingerprints JWS against an SDP; raises :class:`InvalidIdentity`."""
+def verify_fingerprints(sdp: str, jws: str, public_key: PublicKey) -> None:
+    if not jws or len(jws.encode()) > MAX_JWS_SIZE:
+        raise InvalidIdentity("fingerprints JWS is empty or too large")
+    if not fingerprint_entries(sdp):
+        raise InvalidIdentity("SDP has no fingerprint")
     parts = jws.split(".")
-    if len(parts) != 3 or parts[1]:
-        raise InvalidIdentity("fingerprints JWS must be a detached compact serialization")
-    header_b64, _, signature_b64 = parts
-    try:
-        header = json.loads(_unb64url(header_b64))
-    except ValueError:
-        raise InvalidIdentity("malformed JWS header") from None
-    alg = header.get("alg") if isinstance(header, dict) else None
-    if alg not in _ALGORITHMS:
-        raise InvalidIdentity(f"unsupported JWS alg {alg!r}")
-    payload = _b64url(fingerprint_payload(sdp))
-    signing_input = f"{header_b64}.{payload}".encode()
-    if not _verify_raw(public_key, alg, signing_input, _unb64url(signature_b64)):
+    header_b64, signature_b64 = parts[0], parts[-1]
+    alg = _header_alg(header_b64)
+    signing_input = f"{header_b64}.{_b64url(fingerprint_payload(sdp))}".encode()
+    if not _verify(public_key, alg, signing_input, _unb64url(signature_b64)):
         raise InvalidIdentity("fingerprint signature verification failed")
 
 
-# -- cpk claim -------------------------------------------------------------------------
-
-
-def encode_cpk(public_key: ec.EllipticCurvePublicKey) -> str:
-    """Base64 DER SubjectPublicKeyInfo — the ``cpk`` claim value."""
+def encode_cpk(public_key: PublicKey) -> str:
     der = public_key.public_bytes(
         serialization.Encoding.DER, serialization.PublicFormat.SubjectPublicKeyInfo
     )
     return base64.b64encode(der).decode()
 
 
-def decode_cpk(text: str) -> ec.EllipticCurvePublicKey:
+def decode_cpk(text: str) -> PublicKey:
+    if not isinstance(text, str):
+        raise InvalidIdentity("malformed cpk claim")
     try:
-        key = serialization.load_der_public_key(base64.b64decode(text, validate=True))
-    except (ValueError, TypeError):
+        der = _decode_digits(_BASE64_DIGITS.match(text).group())
+        key = serialization.load_der_public_key(der)
+    except (InvalidIdentity, UnsupportedAlgorithm, ValueError, TypeError):
         raise InvalidIdentity("malformed cpk claim") from None
-    if not isinstance(key, ec.EllipticCurvePublicKey):
-        raise InvalidIdentity("cpk is not an EC public key")
+    if isinstance(key, rsa.RSAPublicKey):
+        if key.key_size not in (1024, 2048, 4096):
+            raise InvalidIdentity("malformed cpk claim")
+    elif not isinstance(key, ec.EllipticCurvePublicKey) or not any(
+        isinstance(key.curve, curve_cls) for curve_cls, _ in _EC_ALGORITHMS.values()
+    ):
+        raise InvalidIdentity("malformed cpk claim")
     return key
 
 
-def cpk_digest(public_key: ec.EllipticCurvePublicKey) -> str:
-    """sha-256 hex digest of the DER SPKI — the TOFU pinning unit (Guide s5.2)."""
-    der = public_key.public_bytes(
-        serialization.Encoding.DER, serialization.PublicFormat.SubjectPublicKeyInfo
-    )
-    return hashlib.sha256(der).hexdigest()
+def encode_jwk(public_key: ec.EllipticCurvePublicKey) -> dict[str, str]:
+    alg = _alg_for_key(public_key)
+    _, size = _EC_ALGORITHMS[alg]
+    crv = next(name for name, value in _JWK_CURVES.items() if value == alg)
+    numbers = public_key.public_numbers()
+    return {
+        "crv": crv,
+        "kty": "EC",
+        "x": _b64url(numbers.x.to_bytes(size, "big")),
+        "y": _b64url(numbers.y.to_bytes(size, "big")),
+    }
 
 
-# -- JWT (self-signed server token, Guide s5.2) ----------------------------------------
+def _jwk_bytes(jwk: dict, member: str) -> bytes:
+    value = jwk[member]
+    if not isinstance(value, str):
+        raise ValueError
+    return _unb64url(value)
 
 
-def _sign_jwt(claims: dict, private_key: ec.EllipticCurvePrivateKey) -> str:
-    alg = _alg_for_key(private_key)
-    header = _b64url(_canonical_json({"alg": alg, "typ": "JWT"}))
-    payload = _b64url(json.dumps(claims, separators=(",", ":")).encode())
-    signature = _sign_raw(private_key, alg, f"{header}.{payload}".encode())
-    return f"{header}.{payload}.{_b64url(signature)}"
+def _decode_ec_jwk(jwk: dict) -> ec.EllipticCurvePublicKey:
+    crv = jwk["crv"]
+    if not isinstance(crv, str) or crv not in _JWK_CURVES:
+        raise ValueError
+    curve_cls, _ = _EC_ALGORITHMS[_JWK_CURVES[crv]]
+    x = int.from_bytes(_jwk_bytes(jwk, "x"), "big")
+    y = int.from_bytes(_jwk_bytes(jwk, "y"), "big")
+    if x >= _FIELD_PRIMES[crv] or y >= _FIELD_PRIMES[crv]:
+        raise ValueError
+    return ec.EllipticCurvePublicNumbers(x, y, curve_cls()).public_key()
 
 
-def _decode_jwt(token: str) -> tuple[dict, dict, bytes, bytes]:
-    """Split a compact JWT into (header, claims, signing_input, signature); no verification."""
+def _decode_rsa_jwk(jwk: dict) -> rsa.RSAPublicKey:
+    n_bytes = _jwk_bytes(jwk, "n")
+    e_bytes = _jwk_bytes(jwk, "e")
+    if len(n_bytes) not in _RSA_MODULUS_BYTES:
+        raise ValueError
+    n = int.from_bytes(n_bytes, "big")
+    e = int.from_bytes(e_bytes, "big")
+    return rsa.RSAPublicNumbers(e, n).public_key()
+
+
+def decode_jwk(jwk: object) -> PublicKey:
+    if not isinstance(jwk, dict):
+        raise InvalidIdentity("malformed cpk claim")
+    try:
+        kty = jwk["kty"]
+        if kty == "RSA":
+            return _decode_rsa_jwk(jwk)
+        if kty == "EC":
+            return _decode_ec_jwk(jwk)
+        raise ValueError
+    except (InvalidIdentity, KeyError, TypeError, ValueError):
+        raise InvalidIdentity("malformed cpk claim") from None
+
+
+def key_pin(public_key: PublicKey) -> str:
+    return encode_cpk(public_key)
+
+
+@dataclass(frozen=True)
+class _Token:
+    header: dict
+    claims: dict
+    signing_input: bytes
+    signature_b64: str
+
+
+def _decode_jwt(token: str) -> _Token:
+    if not token or len(token.encode()) > MAX_TOKEN_SIZE:
+        raise InvalidIdentity("token is empty or too large")
     parts = token.split(".")
     if len(parts) != 3:
         raise InvalidIdentity("malformed JWT")
     header_b64, payload_b64, signature_b64 = parts
-    try:
-        header = json.loads(_unb64url(header_b64))
-        claims = json.loads(_unb64url(payload_b64))
-    except ValueError:
-        raise InvalidIdentity("malformed JWT header/payload") from None
-    if not isinstance(header, dict) or not isinstance(claims, dict):
-        raise InvalidIdentity("malformed JWT header/payload")
-    return header, claims, f"{header_b64}.{payload_b64}".encode(), _unb64url(signature_b64)
+    header = _json_object(_unb64url(header_b64))
+    claims = _json_object(_unb64url(payload_b64))
+    return _Token(header, claims, f"{header_b64}.{payload_b64}".encode(), signature_b64)
 
 
-# -- envelope (Guide s5: base64 JSON in a session-level a=identity) --------------------
+def verify_jwt_signature(token: str, public_key: PublicKey) -> dict:
+    decoded = _decode_jwt(token)
+    alg = decoded.header.get("alg")
+    if not isinstance(alg, str) or alg != _key_alg(public_key, alg):
+        raise InvalidIdentity(f"JWT alg {alg!r} does not match the key")
+    signature = _unb64url(decoded.signature_b64)
+    if not _verify(public_key, alg, decoded.signing_input, signature):
+        raise InvalidIdentity("JWT self-signature verification failed")
+    return decoded.claims
+
+
+def _key_alg(public_key: PublicKey, alg: str) -> str | None:
+    if isinstance(public_key, rsa.RSAPublicKey):
+        return alg if alg in _RSA_ALGORITHMS else None
+    return _alg_for_key(public_key)
 
 
 @dataclass(frozen=True)
 class IdentityEnvelope:
-    """A parsed ``a=identity`` envelope: the ``idp`` block plus the opaque assertion parts."""
+    """A parsed ``a=identity`` envelope.
+
+    Attributes:
+        domain: The ``idp.domain`` string.
+        protocol: The ``idp.protocol`` string.
+        token: The assertion's token, empty when the assertion has none.
+        fingerprints: The assertion's detached JWS, empty when the assertion has none.
+    """
 
     domain: str
     protocol: str
-    token: str  # a JWT: GameServerToken (offer) or self-signed server token (answer)
-    fingerprints: str  # detached JWS over the SDP's a=fingerprint lines
+    token: str
+    fingerprints: str
 
 
 def build_envelope(domain: str, token: str, fingerprints: str) -> str:
-    """Base64 envelope value for ``a=identity`` (``idp.protocol`` is always ``default``)."""
-    assertion = json.dumps({"token": token, "fingerprints": fingerprints}, separators=(",", ":"))
-    outer = json.dumps(
-        {"idp": {"domain": domain, "protocol": "default"}, "assertion": assertion},
-        separators=(",", ":"),
+    assertion = canonical_json({"fingerprints": fingerprints, "token": token})
+    outer = canonical_json(
+        {"assertion": assertion, "idp": {"domain": domain, "protocol": IDP_PROTOCOL}}
     )
     return base64.b64encode(outer.encode()).decode()
 
 
-def _parse_envelope(value: str) -> IdentityEnvelope:
+def parse_envelope(value: str) -> IdentityEnvelope:
     try:
-        outer = json.loads(base64.b64decode(value, validate=True))
-        idp = outer["idp"]
-        inner = json.loads(outer["assertion"])
-        return IdentityEnvelope(
-            domain=str(idp["domain"]),
-            protocol=str(idp["protocol"]),
-            token=str(inner["token"]),
-            fingerprints=str(inner["fingerprints"]),
-        )
-    except (ValueError, KeyError, TypeError):
+        outer = _json_object(_strict_b64decode(value))
+    except InvalidIdentity:
         raise InvalidIdentity("malformed a=identity envelope") from None
-
-
-def extract_identity(sdp: str) -> tuple[str, IdentityEnvelope | None]:
-    """Strip ``a=identity`` from an SDP and parse it; ``(stripped_sdp, envelope or None)``.
-
-    Raises :class:`InvalidIdentity` if the attribute is present but malformed. Always strip
-    before handing an SDP to WebRTC (Guide s5.1 step 7).
-    """
-    kept: list[str] = []
-    value: str | None = None
-    for line in sdp.splitlines(keepends=True):
-        stripped = line.strip()
-        if stripped.startswith("a=identity:"):
-            value = stripped[len("a=identity:") :]
-        else:
-            kept.append(line)
-    if value is None:
-        return sdp, None
-    return "".join(kept), _parse_envelope(value)
-
-
-def strip_identity(sdp: str) -> str:
-    """Remove any ``a=identity`` line without parsing it."""
-    return "".join(
-        line
-        for line in sdp.splitlines(keepends=True)
-        if not line.strip().startswith("a=identity:")
+    assertion = outer.get("assertion")
+    idp = outer.get("idp")
+    if not isinstance(assertion, str) or not isinstance(idp, dict):
+        raise InvalidIdentity("malformed a=identity envelope")
+    domain = idp.get("domain")
+    protocol = idp.get("protocol")
+    if not isinstance(domain, str) or not isinstance(protocol, str):
+        raise InvalidIdentity("malformed a=identity envelope")
+    try:
+        inner = json.loads(assertion)
+    except (ValueError, RecursionError):
+        inner = None
+    if not isinstance(inner, dict):
+        inner = {}
+    token = inner.get("token")
+    fingerprints = inner.get("fingerprints")
+    return IdentityEnvelope(
+        domain=domain,
+        protocol=protocol,
+        token=token if isinstance(token, str) else "",
+        fingerprints=fingerprints if isinstance(fingerprints, str) else "",
     )
 
 
+def strip_identity(sdp: str) -> str:
+    return "".join(
+        line
+        for line in _split_keepends(sdp)
+        if not _has_prefix(line.rstrip("\n").rstrip("\r"), IDENTITY_PREFIX)
+    )
+
+
+def extract_identity(sdp: str) -> tuple[str, IdentityEnvelope | None]:
+    for line in _line_texts(sdp):
+        if _has_prefix(line, IDENTITY_PREFIX):
+            return strip_identity(sdp), parse_envelope(line[len(IDENTITY_PREFIX) :])
+    return sdp, None
+
+
 def insert_identity(sdp: str, envelope: str) -> str:
-    """Insert a session-level ``a=identity`` immediately before the first ``m=`` line."""
-    newline = "\r\n" if "\r\n" in sdp else "\n"
-    out: list[str] = []
-    inserted = False
-    for line in sdp.splitlines(keepends=True):
-        if not inserted and line.startswith("m="):
-            out.append(f"a=identity:{envelope}{newline}")
-            inserted = True
-        out.append(line)
-    if not inserted:
-        out.append(f"a=identity:{envelope}{newline}")
-    return "".join(out)
-
-
-# -- server assertion: produce & verify (Guide s5.2) -----------------------------------
+    lines = _line_texts(sdp)
+    identity = f"{IDENTITY_PREFIX}{envelope}"
+    index = next((i for i, line in enumerate(lines) if line.startswith("m=")), len(lines))
+    lines.insert(index, identity)
+    return "".join(f"{line}\r\n" for line in lines)
 
 
 class IdentitySigner:
-    """Produces the server ``a=identity`` for SDP answers.
-
-    Holds the operator's long-lived EC private key. :meth:`sign` self-signs a JWT carrying the
-    ``cpk`` claim, signs the answer's fingerprints, and inserts the envelope. Clients pin
-    ``cpk`` — reuse one keypair across a fleet and treat rotation as a deliberate event.
-    """
+    """An operator identity signer for SDP answers, holding a P-384 key."""
 
     def __init__(
         self,
         private_key: ec.EllipticCurvePrivateKey,
         *,
-        domain: str,
-        claims: dict | None = None,
-        token_lifetime: float | None = 30 * 86400,
+        clock: Callable[[], float] = time.time,
     ) -> None:
-        _alg_for_key(private_key)  # fail fast on unsupported curves
+        if not isinstance(private_key, ec.EllipticCurvePrivateKey) or not isinstance(
+            private_key.curve, ec.SECP384R1
+        ):
+            raise InvalidIdentity("the operator key must be a P-384 key")
         self._private_key = private_key
-        self._domain = domain
-        self._claims = dict(claims or {})
-        self._token_lifetime = token_lifetime
+        self._clock = clock
 
-    def _token(self) -> str:
-        now = int(time.time())
-        claims = {"cpk": encode_cpk(self._private_key.public_key()), "iat": now, **self._claims}
-        if self._token_lifetime is not None:
-            claims["exp"] = now + int(self._token_lifetime)
-        return _sign_jwt(claims, self._private_key)
+    def token(self) -> str:
+        """Build a fresh operator token signed by the operator's key.
+
+        Returns:
+            A compact JWT whose ``cpk`` is the operator's key, valid for 60 seconds.
+        """
+        now = int(self._clock())
+        public_key = self._private_key.public_key()
+        header = {"alg": OPERATOR_ALG, "x5u": encode_cpk(public_key)}
+        claims = {"cpk": encode_jwk(public_key), "exp": now + OPERATOR_TOKEN_LIFETIME, "iat": now}
+        header_b64 = _b64url(f"{canonical_json(header)}\n".encode())
+        payload_b64 = _b64url(f"{canonical_json(claims)}\n".encode())
+        signing_input = f"{header_b64}.{payload_b64}".encode()
+        signature = _sign(self._private_key, OPERATOR_ALG, signing_input)
+        return f"{header_b64}.{payload_b64}.{_b64url(signature)}"
 
     def sign(self, sdp: str) -> str:
-        """Return ``sdp`` with the server assertion inserted."""
-        envelope = build_envelope(
-            self._domain, self._token(), sign_fingerprints(sdp, self._private_key)
-        )
-        return insert_identity(sdp, envelope)
+        """Insert the operator's identity assertion into an SDP answer.
+
+        Args:
+            sdp: The local SDP answer.
+
+        Returns:
+            The SDP with an ``a=identity`` line before its first media line.
+
+        Raises:
+            ConnectionFailed: The SDP has no fingerprint line.
+        """
+        fingerprints = sign_fingerprints(sdp, self._private_key)
+        return insert_identity(sdp, build_envelope(OPERATOR_DOMAIN, self.token(), fingerprints))
+
+
+def _token_issuer(token: str) -> str:
+    try:
+        issuer = _decode_jwt(token).claims.get("iss")
+    except InvalidIdentity:
+        return ""
+    return issuer if isinstance(issuer, str) else ""
+
+
+class PlayerSigner:
+    """A signer of SDP offers with a player's identity assertion.
+
+    Args:
+        token: The player's ``GameServerToken``, carried unchanged.
+        private_key: The key whose public half is the token's ``cpk``.
+    """
+
+    def __init__(self, token: str, private_key: PrivateKey | None) -> None:
+        self._token = token
+        self._private_key = private_key
+        self._domain = _token_issuer(token)
+
+    @classmethod
+    def self_signed(cls, private_key: PrivateKey | None = None) -> PlayerSigner:
+        """Create a signer whose token is signed by its own key, with no Xbox chain.
+
+        Args:
+            private_key: The player's key. A new P-384 key is generated when omitted.
+        """
+        key = generate_operator_key() if private_key is None else private_key
+        alg = _alg_for_key(key)
+        claims = {"cpk": encode_cpk(key.public_key()), "iss": SELF_SIGNED_PLAYER_ISSUER}
+        header_b64 = _b64url(canonical_json({"alg": alg}).encode())
+        payload_b64 = _b64url(canonical_json(claims).encode())
+        signature = _sign(key, alg, f"{header_b64}.{payload_b64}".encode())
+        return cls(f"{header_b64}.{payload_b64}.{_b64url(signature)}", key)
+
+    def sign(self, sdp: str) -> str:
+        """Insert the player's identity assertion into an SDP offer.
+
+        Args:
+            sdp: The local SDP offer.
+
+        Returns:
+            The SDP with an ``a=identity`` line before its first media line.
+
+        Raises:
+            ConnectionFailed: There is no token or key, or the SDP has no fingerprint line.
+        """
+        if not self._token or self._private_key is None:
+            raise ConnectionFailed(SessionError.FAILED_TO_CREATE_IDENTITY_ASSERTION)
+        fingerprints = sign_fingerprints(sdp, self._private_key)
+        return insert_identity(sdp, build_envelope(self._domain, self._token, fingerprints))
 
 
 @dataclass(frozen=True)
 class ServerIdentity:
-    """A structurally verified server assertion; pin :attr:`key_digest` for TOFU."""
+    """A verified operator assertion.
 
-    domain: str  # untrusted display text from the idp block
-    claims: dict  # JWT claims (cpk, iat/exp, any operator extras)
-    public_key: ec.EllipticCurvePublicKey
-    key_digest: str  # sha-256 hex of the cpk SPKI — the unit of trust
+    Attributes:
+        domain: The ``idp.domain`` the operator sent.
+        claims: The operator token's claims.
+        public_key: The operator's public key.
+        key_pin: The key as base64 DER SubjectPublicKeyInfo, to pin on first use.
+    """
+
+    domain: str
+    claims: dict
+    public_key: PublicKey
+    key_pin: str
+
+
+@dataclass(frozen=True)
+class PlayerIdentity:
+    domain: str
+    token: str
+    claims: dict
+    public_key: PublicKey
+
+
+def _require_envelope(sdp: str) -> tuple[str, IdentityEnvelope]:
+    stripped, envelope = extract_identity(sdp)
+    if envelope is None:
+        raise InvalidIdentity("SDP has no a=identity attribute")
+    if not envelope.fingerprints or not envelope.token:
+        raise InvalidIdentity("assertion lacks fingerprints or token")
+    return stripped, envelope
 
 
 def verify_server_identity(sdp: str) -> tuple[str, ServerIdentity]:
-    """Verify the server assertion in an answer SDP; ``(stripped_sdp, ServerIdentity)``.
-
-    Structural verification only (self-signed JWT via the embedded ``cpk``, fingerprints JWS,
-    ``exp``). Trust anchoring — TLS or TOFU pinning of ``key_digest`` — is the caller's policy.
-    """
-    stripped, envelope = extract_identity(sdp)
-    if envelope is None:
-        raise InvalidIdentity("answer has no a=identity attribute")
-    header, claims, signing_input, signature = _decode_jwt(envelope.token)
-    alg = header.get("alg")
-    if alg not in _ALGORITHMS:
-        raise InvalidIdentity(f"unsupported JWT alg {alg!r}")
-    cpk = claims.get("cpk")
-    if not isinstance(cpk, str):
-        raise InvalidIdentity("JWT has no cpk claim")
-    public_key = decode_cpk(cpk)
-    if not _verify_raw(public_key, alg, signing_input, signature):
-        raise InvalidIdentity("JWT self-signature verification failed")
-    exp = claims.get("exp")
-    if isinstance(exp, int | float) and exp < time.time():
-        raise InvalidIdentity("server identity token expired")
-    verify_fingerprints(stripped, envelope.fingerprints, public_key)
+    stripped, envelope = _require_envelope(sdp)
+    public_key = decode_jwk(_decode_jwt(envelope.token).claims.get("cpk"))
+    claims = verify_jwt_signature(envelope.token, public_key)
+    verify_fingerprints(sdp, envelope.fingerprints, public_key)
     return stripped, ServerIdentity(
         domain=envelope.domain,
         claims=claims,
         public_key=public_key,
-        key_digest=cpk_digest(public_key),
+        key_pin=key_pin(public_key),
+    )
+
+
+def verify_player_identity(sdp: str) -> tuple[str, PlayerIdentity]:
+    stripped, envelope = _require_envelope(sdp)
+    claims = _decode_jwt(envelope.token).claims
+    public_key = decode_cpk(claims.get("cpk"))
+    verify_fingerprints(sdp, envelope.fingerprints, public_key)
+    return stripped, PlayerIdentity(
+        domain=envelope.domain,
+        token=envelope.token,
+        claims=claims,
+        public_key=public_key,
     )
