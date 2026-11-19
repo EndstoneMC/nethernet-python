@@ -705,6 +705,145 @@
       "fragment_size": null
     }
   ],
+  "max_message_size_line": [
+    {
+      "line": null,
+      "value": 65536
+    },
+    {
+      "line": "262144",
+      "value": 262144
+    },
+    {
+      "line": "0",
+      "value": 0
+    },
+    {
+      "line": "-5",
+      "value": -5
+    },
+    {
+      "line": "2147483647",
+      "value": 2147483647
+    },
+    {
+      "line": "-2147483648",
+      "value": -2147483648
+    },
+    {
+      "line": "2147483648",
+      "value": null
+    },
+    {
+      "line": "abc",
+      "value": null
+    },
+    {
+      "line": "5:9",
+      "value": 5
+    },
+    {
+      "line": "007",
+      "value": 7
+    },
+    {
+      "line": "+5",
+      "value": null
+    },
+    {
+      "line": "5 ",
+      "value": null
+    },
+    {
+      "line": "5\r",
+      "value": null
+    },
+    {
+      "line": "0x10",
+      "value": null
+    },
+    {
+      "line": "-",
+      "value": null
+    },
+    {
+      "line": "-2147483649",
+      "value": null
+    }
+  ],
+  "max_message_size": [
+    {
+      "name": "no line",
+      "local": 262144,
+      "remote": 65536,
+      "negotiated": 65536,
+      "fragment_size": 65535
+    },
+    {
+      "name": "peer 0",
+      "local": 262144,
+      "remote": 0,
+      "negotiated": 262144,
+      "fragment_size": 262143
+    },
+    {
+      "name": "peer smaller",
+      "local": 262144,
+      "remote": 100000,
+      "negotiated": 100000,
+      "fragment_size": 99999
+    },
+    {
+      "name": "peer larger",
+      "local": 262144,
+      "remote": 1000000,
+      "negotiated": 262144,
+      "fragment_size": 262143
+    },
+    {
+      "name": "peer negative",
+      "local": 262144,
+      "remote": -5,
+      "negotiated": -5,
+      "fragment_size": null
+    },
+    {
+      "name": "peer 1",
+      "local": 262144,
+      "remote": 1,
+      "negotiated": 1,
+      "fragment_size": null
+    },
+    {
+      "name": "peer 2",
+      "local": 262144,
+      "remote": 2,
+      "negotiated": 2,
+      "fragment_size": 1
+    }
+  ],
+  "answer_max_message_size": [
+    {
+      "offer": null,
+      "answer": 65536
+    },
+    {
+      "offer": 0,
+      "answer": 262144
+    },
+    {
+      "offer": -5,
+      "answer": 262144
+    },
+    {
+      "offer": 100000,
+      "answer": 100000
+    },
+    {
+      "offer": 1000000,
+      "answer": 262144
+    }
+  ],
   "receive": [
     {
       "name": "two fragments",

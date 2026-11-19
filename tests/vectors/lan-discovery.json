@@ -165,6 +165,128 @@
       "application_data": "081044656469636174656420536572766572e22207312e32362e36300d426564726f636b206c6576656c00140000000100103161326233633464356536663730383108"
     }
   ],
+  "advertisement_reads": [
+    {
+      "name": "uppercase hex",
+      "fields": {
+        "data_version": 7,
+        "server_name": "Dedicated Server",
+        "protocol_version": 2225,
+        "game_version": "1.26.60",
+        "level_name": "Bedrock level",
+        "player_count": 0,
+        "player_limit": 10,
+        "game_type": 0,
+        "editor_world": false,
+        "hardcore": false,
+        "online_authentication": true,
+        "self_signed_authentication": false,
+        "advertisement_nonce": "1a2b3c4d5e6f7081",
+        "connection_type": 4
+      },
+      "application_data": "071044656469636174656420536572766572E22207312E32362E36300D426564726F636B206C6576656C00140000000100103161326233633464356536663730383108"
+    },
+    {
+      "name": "bytes after the last field",
+      "fields": {
+        "data_version": 7,
+        "server_name": "Dedicated Server",
+        "protocol_version": 2225,
+        "game_version": "1.26.60",
+        "level_name": "Bedrock level",
+        "player_count": 0,
+        "player_limit": 10,
+        "game_type": 0,
+        "editor_world": false,
+        "hardcore": false,
+        "online_authentication": true,
+        "self_signed_authentication": false,
+        "advertisement_nonce": "1a2b3c4d5e6f7081",
+        "connection_type": 4
+      },
+      "application_data": "071044656469636174656420536572766572e22207312e32362e36300d426564726f636b206c6576656c00140000000100103161326233633464356536663730383108ff00"
+    },
+    {
+      "name": "bool byte 02",
+      "fields": {
+        "data_version": 7,
+        "server_name": "Dedicated Server",
+        "protocol_version": 2225,
+        "game_version": "1.26.60",
+        "level_name": "Bedrock level",
+        "player_count": 0,
+        "player_limit": 10,
+        "game_type": 0,
+        "editor_world": false,
+        "hardcore": true,
+        "online_authentication": true,
+        "self_signed_authentication": false,
+        "advertisement_nonce": "1a2b3c4d5e6f7081",
+        "connection_type": 4
+      },
+      "application_data": "071044656469636174656420536572766572e22207312e32362e36300d426564726f636b206c6576656c00140000020100103161326233633464356536663730383108"
+    },
+    {
+      "name": "zero-padded varint",
+      "fields": {
+        "data_version": 7,
+        "server_name": "Dedicated Server",
+        "protocol_version": 2225,
+        "game_version": "1.26.60",
+        "level_name": "Bedrock level",
+        "player_count": 0,
+        "player_limit": 10,
+        "game_type": 0,
+        "editor_world": false,
+        "hardcore": false,
+        "online_authentication": true,
+        "self_signed_authentication": false,
+        "advertisement_nonce": "1a2b3c4d5e6f7081",
+        "connection_type": 4
+      },
+      "application_data": "071044656469636174656420536572766572e22207312e32362e36300d426564726f636b206c6576656c8000140000000100103161326233633464356536663730383108"
+    },
+    {
+      "name": "zigzag 2147483647",
+      "fields": {
+        "data_version": 7,
+        "server_name": "Dedicated Server",
+        "protocol_version": 2225,
+        "game_version": "1.26.60",
+        "level_name": "Bedrock level",
+        "player_count": 0,
+        "player_limit": 2147483647,
+        "game_type": 0,
+        "editor_world": false,
+        "hardcore": false,
+        "online_authentication": true,
+        "self_signed_authentication": false,
+        "advertisement_nonce": "1a2b3c4d5e6f7081",
+        "connection_type": 4
+      },
+      "application_data": "071044656469636174656420536572766572e22207312e32362e36300d426564726f636b206c6576656c00feffffff0f0000000100103161326233633464356536663730383108"
+    },
+    {
+      "name": "bits above 31 dropped",
+      "fields": {
+        "data_version": 7,
+        "server_name": "Dedicated Server",
+        "protocol_version": 2225,
+        "game_version": "1.26.60",
+        "level_name": "Bedrock level",
+        "player_count": -2147483648,
+        "player_limit": 10,
+        "game_type": 0,
+        "editor_world": false,
+        "hardcore": false,
+        "online_authentication": true,
+        "self_signed_authentication": false,
+        "advertisement_nonce": "1a2b3c4d5e6f7081",
+        "connection_type": 4
+      },
+      "application_data": "071044656469636174656420536572766572e22207312e32362e36300d426564726f636b206c6576656cffffffff1f140000000100103161326233633464356536663730383108"
+    }
+  ],
   "advertisement_rejects": [
     {
       "name": "truncated record",
@@ -173,6 +295,14 @@
     {
       "name": "not hex",
       "application_data": "not hex"
+    },
+    {
+      "name": "odd length",
+      "application_data": "071044656469636174656420536572766572e22207312e32362e36300d426564726f636b206c6576656c001400000001001031613262336334643565366637303831080"
+    },
+    {
+      "name": "six-byte varint",
+      "application_data": "071044656469636174656420536572766572e22207312e32362e36300d426564726f636b206c6576656c808080808000140000000100103161326233633464356536663730383108"
     }
   ]
 }

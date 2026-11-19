@@ -242,7 +242,7 @@ Read, the JSON type picks the form:
 - An integer literal from -2^63 to 2^64 - 1 is an integer. A non-negative integer is P2P with that value. A negative integer `-n` is P2P `2^64 - n`, so `-1` is `18446744073709551615`.
 - `true` is P2P 1 and `false` is P2P 0.
 - A real truncates toward zero to a signed 64-bit integer and keeps only its low 32 bits: `1.5` and `1.0` give P2P 1, `5e9` gives P2P 705032704 and `-1.0` gives P2P 4294967295.
-- An integer literal outside that range reads as a real and gives P2P 0. A real at or above 2^64, or below -2^63, gives P2P 0 the same way. This document does not specify a real from 2^63 up to 2^64.
+- An integer literal outside that range reads as a real and gives P2P 0. A real at or above 2^63, a real below -2^63, NaN and an infinity give P2P 0 the same way. So `-0.5` gives P2P 0, `4294967296.0` gives P2P 0 and `4294967297.9` gives P2P 1.
 - A string parses as Section 4.2 says.
 - `null`, an array or an object is unset.
 
@@ -310,11 +310,11 @@ A receiver MUST parse a message with these steps. Any failure drops the message:
 
 A signaling channel sends a message string from a local NetworkID to a remote one and surfaces each inbound (sender, message) pair. An inbound message from a channel other than LAN is not filtered by its addressee.
 
-A peer MUST choose the channel for each outgoing message as follows:
+Whether another signaling channel is set is a property of the endpoint, never of the remote. Only LAN reachability, whether the remote is in the peer table (Section 7.8), is per remote. A peer MUST choose the channel for each outgoing message as follows:
 
-1. If LAN signaling is on, the remote is in the peer table (Section 7.8), and either no other signaling channel is set or the session prefers LAN, send over LAN.
-2. Otherwise, if another signaling channel is set, send over it.
-3. Otherwise the send fails with no signaling channel (24).
+1. If LAN signaling is off, send over the other signaling channel, or fail with no signaling channel (24) when none is set.
+2. Otherwise, if another signaling channel is set, send over LAN when the session prefers LAN and the remote is in the peer table, and over the other channel otherwise.
+3. Otherwise, send over LAN when the remote is in the peer table, and fail with no signaling channel (24) otherwise.
 
 An incoming session prefers the channel its `CONNECTREQUEST` came on, so a session opened over LAN answers over LAN, its declining `CONNECTERROR` included. An outgoing session has no preference and uses the other channel when one is set.
 
@@ -329,7 +329,7 @@ A client that joins a host picked from LAN discovery signals over LAN only. A cl
 
 - LAN signaling carries the whole message string as the message data of a LAN discovery Message packet (Section 7.6), with the sender id set to the local id and the recipient id to the target.
 - A sender MUST unicast it to the target's recorded address and MUST NOT broadcast it.
-- A target with no live record in the peer table gets nothing, and the send reports no session error.
+- A target with no live record in the peer table gets nothing, and the send reports no session error. Section 6.1 chooses LAN only for a remote in the peer table, and a record expires when a lookup finds it older than 60 s (Section 7.8), so this case arises when the record expires between that choice and the send.
 - A message that does not fit 1140 bytes still goes out whole in one datagram (Section 7.6).
 
 ### 6.3. HTTP Signaling
@@ -441,6 +441,8 @@ To handle an accepted `POST /v1/join/{networkId}` with body `B`:
 4. When the host sends its first signal to `{networkId}` with that session id, answer `200 OK`, `Content-Type: application/sdp`, with everything after the signal's second space as the body. The signal's type is not checked.
 5. If no such signal comes within 10 s, answer `504 Gateway Timeout`.
 
+Every later signal for that session id finds no pending request and is dropped silently. It is not queued, raises no error and is reported to the sender as success.
+
 So a rejecting host's `CONNECTERROR <id> 37` answers `200 application/sdp` with the body `37`, not an SDP.
 
 BDS checks the identity assertion of every offer that comes this way, whatever its `online-mode` setting, and answers an offer whose `a=identity` is missing or fails verification with identity not allowed (37). A dialer that joins BDS over HTTP therefore signs its offer (Section 6.3.6). An offer that passes the identity check but fails in WebRTC gets no signal back and ends in the 504.
@@ -454,7 +456,7 @@ An HTTP signaling client:
 - MUST split the signal `<type> <session id> <data>` at its first two spaces and post only `<data>` as the body. It does not check the type. It reads the session id as Section 5.3 step 4 reads a connection id, so `ANYTHING 7abc data` posts `data` for session id 7.
 - MUST NOT send `CANDIDATEADD`. It sends one offer with every candidate inline (Section 12.5).
 - MUST sign its offer with an identity assertion (Section 9) to join BDS, which refuses an unsigned offer with identity not allowed (37) (Section 6.3.5).
-- On a 2xx answer without a transport error, delivers a non-empty body as `CONNECTRESPONSE <session id> <body>` from the remote, `<session id>` that of the posted signal, without inspecting the body. An empty body delivers nothing.
+- On a 2xx answer without a transport error, delivers a non-empty body as `CONNECTRESPONSE <session id> <body>` from the remote, `<session id>` that of the posted signal, without inspecting the body. It keeps no signal type, so this holds for the answer to any posted signal. An empty body delivers nothing.
 - Fails the dial on any other answer:
 
 | Answer | Error |
@@ -466,7 +468,7 @@ An HTTP signaling client:
 
 A client MAY instead fail the dial on a 2xx body that does not start with `v=`. It then reports the code the body holds when the body reads as `CONNECTERROR` data (Section 5.3 step 6), and signaling parse failure (17) otherwise. A client MAY bound each POST by the negotiation timeout and report negotiation timeout (14) when it expires, where the table gives signaling send failure (26) for a failed request.
 
-This paragraph is informative. The release client trickles over HTTP by default. Each `CANDIDATEADD` goes as its own POST whose body is the candidate, an attempt is one offer POST plus one POST per candidate, and none is retried. The HTTP signaling server delivers each such POST as a new `CONNECTREQUEST` with its own session id and no `a=identity` (Section 6.3.5), so BDS answers each one `200 application/sdp` with the body `37`. BDS's own answer is a full-ICE SDP with every candidate inline, and no `CANDIDATEADD` follows (Section 12.5).
+This paragraph is informative. The release client trickles over HTTP by default. Each `CANDIDATEADD` goes as its own POST whose body is the candidate, an attempt is one offer POST plus one POST per candidate, and none is retried. The HTTP signaling server delivers each such POST as a new `CONNECTREQUEST` with its own session id and no `a=identity` (Section 6.3.5), so BDS answers each one `200 application/sdp` with the body `37`. The release client delivers that body as a `CONNECTRESPONSE` for the session. It always runs HTTP signaling with an identity verifier, and no setting skips it, so that `CONNECTRESPONSE`, which carries no `a=identity` line, is declined and the session closes with identity not allowed (37), whatever the body says. The only state it checks is that the session exists, and it ignores a `CONNECTRESPONSE` for a session that no longer exists. BDS's own answer is a full-ICE SDP with every candidate inline, and no `CANDIDATEADD` follows (Section 12.5).
 
 ### 6.4. Online Signaling
 
@@ -543,7 +545,7 @@ BDS's application data is the lowercase hex text of this binary record, so the a
 | 14 | connection type | `zigzag` | 4, or 7 while linked to the online signaling service |
 
 - A receiver MUST NOT check the data version. It parses every record with the same 14 fields and drops only a record that fails to parse.
-- This document does not specify how a receiver treats uppercase hex, an odd number of hex digits, bytes after the last field, a flag byte above 1, an over-long `varint` or the integer width of a `zigzag` field.
+- A receiver MAY read a record as the release client does. The release client decodes the hex case-insensitively and validates no character, and an odd number of hex digits fails at the first byte and drops the record. What a pair that is not hex decodes to is unspecified. It ignores bytes after the last field and reads a `bool` as true for any non-zero byte. It reads a `varint` of at most 5 bytes, accepts a zero-padded form such as `80 00`, drops bits above 31 and fails the record on a sixth byte. It decodes a `zigzag` field on 32 bits.
 - The connection type is not the transport: -1 undefined, 0 local, 1 IPv4, 2 IPv6, 3 plain WebSocket signaling, 4 LAN WebRTC signaling, 5 NAT, 6 UPnP, 7 JSON-RPC WebSocket signaling, 8 unknown IP. A host without a link to the online signaling service, such as a LAN or HTTP-only host, sends 4.
 - The nonce is new at every restart. BDS checks it only when the advertisement updates: at startup, when a player joins or leaves, and when the player limit changes. An update more than 300 s of monotonic time after the nonce was drawn draws a new one, so an idle host keeps its nonce.
 - A stock BDS record is 67 bytes, 134 hex characters, and a stock Response is 158 bytes.
@@ -680,11 +682,13 @@ Both directions of HTTP signaling can carry an identity assertion in the SDP: th
 
 ### 9.1. Canonical JSON
 
-Every JSON text [RFC8259] this section produces is compact, with no whitespace between tokens, and has its object keys in sorted order. Strings escape only `"`, `\` and the bytes 0x01 to 0x1F: `\b`, `\t`, `\n`, `\f` and `\r` by name, the others as `\u00XX` with uppercase hex digits. Bytes from 0x80 up, 0x7F and `/` are written raw.
+Every JSON text [RFC8259] this section produces is compact, with no whitespace between tokens, and has its object keys sorted by the unsigned bytes of their UTF-8, which for valid UTF-8 is code point order. Strings escape only `"`, `\` and the bytes 0x01 to 0x1F: `\b`, `\t`, `\n`, `\f` and `\r` by name, the others as `\u00XX` with uppercase hex digits. Bytes from 0x80 up, 0x7F and `/` are written raw. A string or key is cut at its first 0x00 byte and the closing quote follows, so 0x00 is never escaped.
+
+An integer is plain decimal with a leading `-` when negative, no `+` and no leading zeros. A non-integer number is printed as by the C format `%#.16g`, 16 significant digits that always include a decimal point, and then every trailing zero but the last one after the point is removed: `1.5` becomes `1.50`, `2.0` stays `2.0` and `0.1` becomes `0.10`. `%#.16g` prints the exponent form when the decimal exponent is below -4 or at least 16, and that form is left as printed.
 
 The operator token's and the self-signed player token's header and payload JSON each end in `\n` before base64url encoding. The fingerprints JWS header does not.
 
-This form resembles the JSON Canonicalization Scheme [RFC8785] but is not it: the hex digits of `\u00XX` are uppercase, and the token JSON ends in a newline. This document does not specify the escape for 0x00, the basis of the key order or the number format. Every member Section 9 defines has an ASCII key and every number it defines is an integer, so a bytewise key sort and plain decimal integers produce the texts of Appendix A.
+This form resembles the JSON Canonicalization Scheme [RFC8785] but is not it: keys sort by code point rather than by UTF-16 code unit, the hex digits of `\u00XX` are uppercase, 0x00 cuts a string, non-integer numbers are not formatted as ECMAScript formats them, and the token JSON ends in a newline. Every number Section 9 defines is an integer.
 
 ### 9.2. Envelope
 
@@ -770,7 +774,7 @@ BDS accepts a self-signed player token with no Xbox chain, even with `online-mod
 - has the header `{"alg":"ES384","x5u":<key>}`, or `{"alg":"ES384","kid":"host","x5u":<key>}` when the client signs as a host, `<key>` its DER SubjectPublicKeyInfo in standard base64 with padding, with no `typ`;
 - has a payload that holds the strings `xid`, `mid`, `nid`, `pid`, `xname`, `nname` and `pname`, `exp`, `cpk` (the same key as `x5u`), `aud`, `leguuid`, `ap` (an integer), and `"ishost":true` only for a host;
 - has `aud` `api://auth-minecraft-services/multiplayer` and `leguuid` a lowercase hyphenated UUID;
-- has no `iss`, `iat` or `nbf`, and `exp` is the signing time in Unix seconds plus 31536000.
+- has no `iss`, `iat` or `nbf`, and `exp` is a JSON integer, the signing time truncated to whole Unix seconds plus 31536000.
 
 ### 9.7. Operator Assertion
 
@@ -778,8 +782,10 @@ The listener's assertion in its answer:
 
 - It is self-signed with the operator's P-384 key and `ES384`. Every session of one BDS process uses the same key, and BDS makes a new key on every restart.
 - `idp.domain` is the fixed string `self`.
-- `token` is a JWT [RFC7519] signed by the operator's key. Its header is `{"alg":"ES384","x5u":<key>}`, `<key>` the operator's DER SubjectPublicKeyInfo in standard base64, with no `typ` and no `kid`. Its payload is `{"cpk":{"crv":"P-384","kty":"EC","x":<x>,"y":<y>},"exp":<exp>,"iat":<iat>}`, with `<x>` and `<y>` the 48-byte coordinates in base64url [RFC7517], `iat` the signing time in whole Unix seconds and `exp` `iat + 60`. It has no `iss`.
+- `token` is a JWT [RFC7519] signed by the operator's key. Its header is `{"alg":"ES384","x5u":<key>}`, `<key>` the operator's DER SubjectPublicKeyInfo in standard base64, with no `typ` and no `kid`. Its payload is `{"cpk":{"crv":"P-384","kty":"EC","x":<x>,"y":<y>},"exp":<exp>,"iat":<iat>}`, with `<x>` and `<y>` the 48-byte coordinates in base64url [RFC7517], `iat` the signing time truncated to whole Unix seconds and `exp` `iat + 60`, both JSON integers. It has no `iss`.
 - `fingerprints` is signed by the same key.
+
+Every DER SubjectPublicKeyInfo the operator and the client write, here and in Section 9.6, names its curve and holds the uncompressed point, `04`, `X`, `Y`. A JWK carries `x` and `y` as separate coordinates.
 
 The client checks the operator's key against a trust-on-first-use store and asks the player about an unknown key. The pin is the key itself, its DER SubjectPublicKeyInfo in standard base64, with no digest. It matches on the key alone, not per host.
 
@@ -811,6 +817,8 @@ To verify an operator's answer, a dialer:
 4. Verifies the token's signature under that key. The token's `alg` MUST match the key's type.
 5. Verifies `fingerprints` under the same key over the payload of the received SDP.
 
+The release client verifies every `CONNECTRESPONSE` that came over HTTP signaling, whatever its settings, and skips the check only for one that came over LAN. BDS and the release client skip the identity check for any `CONNECTREQUEST` or `CONNECTRESPONSE` that came over LAN.
+
 A JWK `cpk` is read for `kty`, then `crv`, `x` and `y`, or `n` and `e`. Every other member, a private `d` included, is ignored.
 
 - `kty` is exactly `EC` or `RSA`, and `crv` exactly `P-256`, `P-384` or `P-521`.
@@ -823,7 +831,16 @@ A JWK `cpk` is read for `kty`, then `crv`, `x` and `y`, or `n` and `e`. Every ot
 
 - After signaling, the peers run standard WebRTC: ICE [RFC8445], DTLS [RFC6347] with the role from the SDP `setup` attribute, and SCTP over DTLS [RFC8261] [RFC4960] carrying the data channels [RFC8831] [RFC8832]. BDS's answer takes `a=setup:active`.
 - BDS's offers and answers use libwebrtc's default offer and answer options, with ICE restart off. The SDP [RFC8866] is not edited, except for the optional `a=identity` line (Section 9).
-- BDS's offer advertises `a=max-message-size:262144`. Its answer advertises the smaller of the offer's value and 262144, or 262144 when the offer's value is 0 or less. An SDP omits `a=max-message-size` when the value is 65536, and a missing line means 65536, as in [RFC8841]. Section 11.2 says how the max message size sets the fragment size.
+- BDS's offer advertises `a=max-message-size:262144`. Its answer advertises the smaller of the offer's value and 262144, or 262144 when the offer's value is 0 or less. An SDP omits `a=max-message-size` when the value is 65536, and a missing line means 65536, as in [RFC8841].
+- BDS reads `a=max-message-size` as `mms-line` below. The line ends at `\n` with one trailing `\r` stripped. The value is the first field after the colon, and any further colon-separated fields are ignored, so `a=max-message-size:5:9` reads 5. The field holds no `+`, space, tab, extra `\r`, `0x` prefix, non-ASCII digit or 0x00, and leading zeros are decimal, so `007` is 7. A bare `-` fails. This document does not specify how BDS reads an `a=max-message-size` line that ends the SDP with no `\n`. A field that does not match `mms-field`, or whose value lies outside -2147483648 to 2147483647, fails the whole description. 0 and negative values in range parse.
+
+```abnf
+mms-line        = %s"a=max-message-size:" ( mms-field [ CR ] / mms-field ":" mms-rest ) LF
+mms-field       = [ "-" ] 1*DIGIT            ; a signed 32-bit value
+mms-rest        = *( %x00-09 / %x0B-FF )     ; ignored, a trailing CR included
+```
+
+- Once both descriptions are set, the SCTP max message size is the local value when the remote value is 0, and otherwise the smaller of the two, compared signed. A remote value of 0 therefore means any size, and a negative remote value is taken as is. Section 11.2 says how the max message size sets the fragment size.
 - ICE servers come as a relay configuration of `uri`, `username` and `password`, at most 16 servers. A peer that does not trickle clears every ICE server before it creates the peer connection, so it gathers host candidates only. A dedicated server never uses ICE servers.
 - A peer SHOULD ignore a STUN response that fails message integrity and keep waiting, as libwebrtc does. Sessions that share a UDP socket answer each other's checks with 401 and no `MESSAGE-INTEGRITY` (Section 14.2).
 - Closing a session closes its peer connection.
@@ -893,8 +910,9 @@ The last or only fragment of a packet has header 0. An empty packet cannot be se
 ### 11.2. Fragment Size
 
 - The fragment size `F` defaults to 262143 (`0x3FFFF`), the default SCTP max message size 262144 minus 1.
-- When ICE reaches connected, `F` becomes the SCTP transport's max message size minus 1. It keeps its previous value when the transport reports no max message size. A missing `a=max-message-size` line is not that case: it means 65536 (Section 10.1).
-- A max message size of 1 or less closes the session with invalid max message size (34). [RFC8841] gives a value of 0 the meaning of no limit. This document does not specify which advertised value the SCTP transport reports, or how it reports a peer's 0.
+- When ICE reaches connected, `F` becomes the max message size Section 10.1 negotiates, minus 1. A missing `a=max-message-size` line means 65536 (Section 10.1).
+- A max message size of 1 or less closes the session with invalid max message size (34). A remote value of 0 gives the local value, as [RFC8841] gives 0 the meaning of no limit, and a negative remote value is 1 or less.
+- As answerer BDS fragments at the smaller of 262144 and the offer's value, minus 1, at 65535 when the offer has no `a=max-message-size` line, and at 262143 when the offer's value is 0.
 - The fragment size is per session. Against BDS the max message size is at most 262144, so `F` never exceeds 262143 and one fragment never reaches the 16 MiB send-queue limit.
 
 ### 11.3. Send
@@ -985,6 +1003,8 @@ The application accepts or declines each `CONNECTREQUEST` and `CONNECTRESPONSE`,
 - The decision has no timer. An offer the application never decides gets no session and no reply, and the remote dialer closes with its own 14.
 - A duplicate `CONNECTREQUEST` is decided again. Declined, it gets the 37 reply and the existing session stays.
 - A listener that verifies identity (Section 9.8) declines with 37.
+- A dialer that verifies identity (Section 9.8) declines a `CONNECTRESPONSE` that fails verification with 37.
+- BDS and the release client skip the identity check for any `CONNECTREQUEST` or `CONNECTRESPONSE` that came over LAN.
 
 ### 12.3. Dialer
 
@@ -1019,7 +1039,7 @@ A dialer starts in `offering`. Once its offer is ready it sends `CONNECTREQUEST`
 | any but `closed` | `CONNECTERROR <id> <e>` | | close with `e` | `closed` |
 | `awaiting_answer` | sweep | negotiation timeout passed | close with 14 | `closed` |
 | `connecting`, `open` | `CANDIDATEADD` | | apply the candidate | unchanged |
-| `connecting` | ICE connected | max message size unknown or above 1 | update the fragment size; open the session to the application, once | `open` |
+| `connecting` | ICE connected | max message size above 1 | update the fragment size; open the session to the application, once | `open` |
 | `connecting` | ICE connected | max message size 1 or less | close with 34 | `closed` |
 | any but `closed` | ICE failed | | close with 5 | `closed` |
 | any but `closed` | sweep | ICE failed or closed | close with 5 | `closed` |
@@ -1059,7 +1079,7 @@ A listener session starts either as an early session, from a candidate that arri
 | any | `CONNECTERROR` | | ignore | unchanged |
 | any but `closed` | `CONNECTRESPONSE` | declined | close with 37 | `closed` |
 | any | `CONNECTRESPONSE` | accepted | none | unchanged |
-| `connecting` | ICE connected | max message size unknown or above 1 | update the fragment size; open the session to the application, once | `open` |
+| `connecting` | ICE connected | max message size above 1 | update the fragment size; open the session to the application, once | `open` |
 | `connecting` | ICE connected | max message size 1 or less | close with 34 | `closed` |
 | `connecting`, `open` | ICE failed | | close with 5 | `closed` |
 | `connecting`, `open` | sweep | ICE failed or closed | close with 5 | `closed` |
@@ -1275,7 +1295,7 @@ This section is informative.
 - A rejecting HTTP host answers `200 application/sdp` with the body `37`. A client that expects an SDP in every 2xx answer misreads it.
 - A Message or Response length field never exceeds 1140 or 1148, whatever the datagram carries. A receiver that trusts the length field truncates a full SDP.
 - Game packets carry no RakNet `0xFE` prefix. BDS ignores a batch that has one.
-- The release client trickles over HTTP, one POST per candidate, which Section 12.5 forbids. BDS answers each candidate POST `200 application/sdp` with the body `37` (Section 6.3.6).
+- The release client trickles over HTTP, one POST per candidate, which Section 12.5 forbids. BDS answers each candidate POST `200 application/sdp` with the body `37`, and the release client delivers that body as a `CONNECTRESPONSE` without an `a=identity` line, which its identity verifier declines with 37 (Section 6.3.6).
 
 ## 17. References
 
@@ -1322,11 +1342,11 @@ This appendix is informative. The vectors live in `tests/vectors/`, one JSON fil
 | File | Schema |
 | --- | --- |
 | `lan-crypto.json` | `keys[]: {application_id, key_hex}`; `seal[]: {name, application_id, plaintext_hex, envelope_hex}`; `open_rejects[]: {name, application_id, envelope_hex}`, each rejected |
-| `lan-discovery.json` | `packets[]: {name, type, sender_id, recipient_id?, payload_hex?, datagram_hex}`, serialize to and parse from `datagram_hex` (plaintext, before sealing); `parse[]: {name, datagram_hex, result}`; `advertisements[]: {name, fields, application_data, response_datagram_length?}`, `fields` keyed by the labels of Section 7.5 in snake_case; `advertisement_rejects[]: {name, application_data}` |
+| `lan-discovery.json` | `packets[]: {name, type, sender_id, recipient_id?, payload_hex?, datagram_hex}`, serialize to and parse from `datagram_hex` (plaintext, before sealing); `parse[]: {name, datagram_hex, result}`; `advertisements[]: {name, fields, application_data, response_datagram_length?}`, `fields` keyed by the labels of Section 7.5 in snake_case; `advertisement_reads[]: {name, fields, application_data}`, read only, as the release client reads them; `advertisement_rejects[]: {name, application_data}` |
 | `signaling.json` | `serialize[]: {identifier, connection_id, data?, error?, text}`; `parse[]: {text, result: {identifier, connection_id, data, error?} or null}` |
-| `framing.json` | `send[]: {name, fragment_size, send_type, packet_hex or packet_length, channel, fragments_hex or headers and fragment_lengths}`, where a `packet_length` packet has byte `i` equal to `i mod 256`; `send_drops[]: {name, fragment_size, send_type, packet_length}`, sending nothing; `fragment_size[]: {max_message_size, fragment_size or null}`, null closing with 34; `receive[]: {name, channel, messages_hex, delivered_hex, closes_at}`, `closes_at` the index of the message that closes the channel |
+| `framing.json` | `send[]: {name, fragment_size, send_type, packet_hex or packet_length, channel, fragments_hex or headers and fragment_lengths}`, where a `packet_length` packet has byte `i` equal to `i mod 256`; `send_drops[]: {name, fragment_size, send_type, packet_length}`, sending nothing; `fragment_size[]: {max_message_size, fragment_size or null}`, null closing with 34; `max_message_size_line[]: {line, value}`, the `a=max-message-size` value read from an SDP whose line is `a=max-message-size:`, then `line`, then CRLF, `line` null for no line and `value` null when the description fails; `max_message_size[]: {name, local, remote, negotiated, fragment_size or null}`, the negotiation of Section 10.1 and its fragment size; `answer_max_message_size[]: {offer, answer}`, the value BDS's answer advertises for the offer's value, `offer` null for no line; `receive[]: {name, channel, messages_hex, delivered_hex, closes_at}`, `closes_at` the index of the message that closes the channel |
 | `network-id.json` | `parse[]: {text, form, value?, string, valid}`; `json_read[]: {json, form, value?}`, `json` a JSON text; `json_write[]: {form, value?, json}`; `correlation_id[]: {form, value?, correlation_id}` |
-| `http-signaling.json` | `exchanges[]: {name?, lan_visibility?, request_hex, delivered_signal?, host_signal?, response_hex}`, one request on a fresh connection to a server whose ping JSON is that of Section 6.3.4, `response_hex` empty when the server closes without a response and the 504 case reached after the 10 s join timeout; `network_id_path[]: {text, value or null}`; `probe_urls[]: {host, port, batches}`; `client_signal_body[]: {signal, session_id, body}`; `client_status[]: {status, error}`; `size_limit[]: {request_head, body_byte_hex, body_length, total_length, response_hex}`, the request being `request_head` followed by `body_length` copies of the body byte |
+| `http-signaling.json` | `exchanges[]: {name?, lan_visibility?, request_hex, delivered_signal?, host_signal?, host_signals?, response_hex}`, `host_signals` sent in order, each reported as success, one request on a fresh connection to a server whose ping JSON is that of Section 6.3.4, `response_hex` empty when the server closes without a response and the 504 case reached after the 10 s join timeout; `network_id_path[]: {text, value or null}`; `probe_urls[]: {host, port, batches}`; `client_signal_body[]: {signal, session_id, body}`; `client_status[]: {status, error}`; `size_limit[]: {request_head, body_byte_hex, body_length, total_length, response_hex}`, the request being `request_head` followed by `body_length` copies of the body byte |
 | `identity.json` | `canonical_json[]: {value, canonical or canonical_hex}`; `envelope[]: {domain, token, fingerprints, json_hex, value}`; `insert_identity[]: {sdp, value, result or result_hex}`; `fingerprint_payload[]: {sdp, payload_hex}`; `operator_token[]: {curve, private_scalar, signing_time, header_json_hex, payload_json_hex}`, the decoded token segments; `jwk_encode[]: {curve, private_scalar, jwk_json}`; `jwt_verify[]: {name, jwk, token, valid, claims?}`; `base64url_no_bytes[]`, JWK coordinate values that fail; `envelope_rejects[]`, `a=identity` values that are rejected; `rsa_jwk[]: {name, jwk, valid}`, a JWK `cpk` read as Section 9.8 says; `ecdsa_signature[]: {name, jwk, sdp, fingerprints, valid}`, the fingerprints JWS verified under the key over the SDP's payload; `player_offer[]: {name, sdp, valid}`, a listener's verification of the offer (Section 9.8); `jwt_verify_mixed_alphabet[]`, as `jwt_verify` |
 
 The vectors come from the conformance and golden tests of nethernet-python, whose hex literals were computed independently of its code. The envelope vector was produced with the OpenSSL command-line tools, and the JWS verification case is [RFC7515] Appendix A.3. A selection follows.
@@ -1426,6 +1446,7 @@ This appendix is informative. It records where nethernet-python, a Python implem
 Interface:
 
 - Three entry points, `serve`, `connect` and `discover`, on asyncio. One `Connection` class serves both ends. `connect` picks the channel from its target: a `NetworkID` or a discovered host signals over LAN, and a `host`, `host:port` or `http(s)://` string over HTTP. An explicit URL skips the probe and is the base URL.
+- Each `connect` builds its own endpoint, so choosing the channel from the target is the endpoint-wide choice of Section 6.1, not a per-remote one: a LAN target gives an endpoint with LAN signaling only, and an HTTP target one with LAN signaling off and HTTP as the other signaling channel.
 - `serve` runs HTTP signaling on `[::]:19132` and LAN on 7551 with the default application id, answers Requests and does not broadcast. `discover` broadcasts while it runs, for 2.0 s by default.
 - `serve` advertises the stock BDS values with connection type 4, online authentication 1 and self-signed authentication 1, as BDS does with `online-mode=false`, since it accepts self-signed player tokens.
 - `serve` signs each HTTP answer with an auto-generated P-384 operator key unless given one, and refuses an unsigned or invalid HTTP offer with 37. LAN offers are not checked. `connect` over HTTP signs with a fresh self-signed player key unless given a signer.
@@ -1442,6 +1463,6 @@ Deviations and choices:
 - The dialer never trickles: aiortc gathers before the offer, so it sends one full-ICE offer. The listener accepts trickled candidates. WebRTC ports are OS-chosen, one ephemeral port per peer connection.
 - The connection id is drawn from 8 bytes of `secrets`. MACs are compared with `hmac.compare_digest`.
 - `a=identity` is stripped before the SDP reaches aiortc. RSA exponents that the `cryptography` package refuses are rejected, the MAY of Section 9.8. Operator key pinning is the application's `on_server_identity` callback.
-- aiortc writes `a=max-message-size:65536`, rewritten to the values BDS advertises. The SCTP max message size is read from the remote SDP, 65536 when the line is missing.
+- aiortc writes `a=max-message-size:65536`, rewritten to the values BDS advertises. The SCTP max message size is negotiated from the local value and the remote SDP's as Section 10.1 says, 65536 for a missing line.
 - aiortc has no relay-only transport policy, so the relay-only flag strips candidates other than `typ relay` from the local SDP.
 - A vanished peer is noticed when aioice's consent checks fail [RFC7675], after about 30 s, and closes with 5. aioice before 0.13 fails a candidate pair on a 401 without integrity, so the library patches it.

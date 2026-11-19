@@ -37,6 +37,20 @@
       "response_hex": "485454502f312e3120323030204f4b0d0a436f6e74656e742d547970653a206170706c69636174696f6e2f7364700d0a436f6e74656e742d4c656e6774683a2031300d0a436f6e6e656374696f6e3a20636c6f73650d0a0d0a763d300d0a613d780d0a"
     },
     {
+      "name": "later signals dropped",
+      "request_hex": "504f5354202f76312f6a6f696e2f31323320485454502f312e310d0a436f6e74656e742d4c656e6774683a20350d0a0d0a763d300d0a",
+      "delivered_signal": {
+        "sender_id": "123",
+        "text": "CONNECTREQUEST 1 v=0\r\n"
+      },
+      "host_signals": [
+        "CONNECTRESPONSE 1 v=0\r\na=x\r\n",
+        "CANDIDATEADD 1 candidate:1 1 udp 1 127.0.0.1 1 typ host",
+        "CONNECTRESPONSE 1 v=1\r\n"
+      ],
+      "response_hex": "485454502f312e3120323030204f4b0d0a436f6e74656e742d547970653a206170706c69636174696f6e2f7364700d0a436f6e74656e742d4c656e6774683a2031300d0a436f6e6e656374696f6e3a20636c6f73650d0a0d0a763d300d0a613d780d0a"
+    },
+    {
       "name": "offer rejected",
       "request_hex": "504f5354202f76312f6a6f696e2f31323320485454502f312e310d0a436f6e74656e742d4c656e6774683a20350d0a0d0a763d300d0a",
       "delivered_signal": {
