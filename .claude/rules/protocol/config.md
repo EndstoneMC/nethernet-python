@@ -30,9 +30,8 @@ Configurable defaults. Every one stays configurable.
 | Reflector reply IP | none: the request's source IP | IP address | listener | `server-public-ip` | (1.26.60) |
 
 - Negotiation timeout: a negative value counts as 0 (1.26.60).
-- LAN visibility off only stops discovery Responses (`lan-discovery.md`). LAN Messages and LAN signaling carry on, the discovery port stays bound, the `GET /v1/join` body is empty (`http-signaling.md`) and `POST /v1/join/{networkId}` still answers (1.26.60).
-- HTTP signaling bind address: `server-ip` sets the listener's address, in one address family only. Empty means dual-stack `[::]`. An address that does not parse, or one the host lacks, leaves no HTTP listener, and the server starts with no error. The discovery socket ignores `server-ip` (1.26.60).
-- This library raises from `serve()` on a bad bind address instead (`api.md`).
+- LAN visibility off stops discovery Responses (`lan-discovery.md`). LAN Messages and LAN signaling carry on, the discovery port stays bound, the `GET /v1/join` body is empty (`http-signaling.md`) and `POST /v1/join/{networkId}` still answers (1.26.60).
+- HTTP signaling bind address: `server-ip` sets the listener's address, in one address family only. Empty means dual-stack `[::]`. A bad address is handled as `http-signaling.md` says. The discovery socket ignores `server-ip` (1.26.60).
 - LAN signaling: a dedicated server turns it on when it creates the transport and never turns it off, whatever `server.properties` says (1.26.60).
 - ICE servers: BDS sets an empty relay list after it signs in, so a dedicated server never uses ICE servers (1.26.60).
 - The session sweep period, the probe timeout, the HTTP join and receive timeouts and the fragment size are fixed. They live in `session.md`, `http-signaling.md` and `framing.md`.
@@ -79,4 +78,6 @@ A hosting client, read from the Windows client 1.26.60.5 binary, not observed (1
 
 - Defaults live in `constants.py`, in seconds for a duration. Never invent one: a default comes from this table.
 - `serve()` takes the dedicated-server shape: HTTP signaling on `[::]:19132` and LAN on 7551 with the default application id, answering Requests without broadcasting them.
-- The `discover` deadline and the HTTP POST timeout are this library's choices, not BDS settings.
+- The `discover` deadline is this library's choice, not a BDS setting. The HTTP POST timeout is the negotiation timeout, and a LAN host lookup is bounded by the `timeout` argument of `connect` (`api.md`).
+- The library dialer never trickles: it sends one full-ICE offer. The listener accepts trickled candidates.
+- WebRTC UDP ports are OS-chosen, one ephemeral port per peer connection.

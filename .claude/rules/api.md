@@ -21,8 +21,8 @@ The facade is `api.py`, `transport_api.py` and `__init__.py`, a thin asyncio lay
 
 ## Entry points
 
-- Three entry points, never split by signaling channel. There is no `serve_http` or `connect_http`, and they need no deprecation before 0.1.0.
-- `serve(handler, ...)` is the only server entry point. One call serves HTTP signaling on `host`:`port` and LAN signaling on `lan_host`:`lan_port` together, answers discovery with `connection` 4 and does not broadcast. Its defaults come from `protocol/config.md`.
+- Three entry points, never split by signaling channel.
+- `serve(handler, ...)` is the only server entry point. One call serves HTTP signaling on `host`:`port` and LAN signaling on `lan_host`:`lan_port` together, answers discovery with `connection` 4 and does not broadcast. It signs each HTTP answer with `identity_signer`, an `IdentitySigner`, by default a fresh auto-generated P-384 one, and refuses an unsigned or invalid HTTP offer with `SessionError.IDENTITY_NOT_ALLOWED` (37) as BDS does. LAN offers are not checked. Its defaults come from `protocol/config.md`.
 - `connect(target, ...)` is the only client entry point. The target picks the channel: a `NetworkID` or `DiscoveredHost` goes over LAN, a string, `host`, `host:port` or an `http(s)://` URL, over HTTP. An HTTP connect signs with a fresh self-signed `PlayerSigner` unless `identity_signer` is given.
 - `discover(...)` is the LAN discovery call.
 
@@ -30,17 +30,17 @@ The facade is `api.py`, `transport_api.py` and `__init__.py`, a thin asyncio lay
 
 - One `Connection` class serves both ends. NetherNet is symmetric, so there is no client and server split.
 - `Connection` has `remote_id`, `local_id`, `connection_id` and `state`.
-- `connect` resolves once the session is connected and raises `ConnectionFailed(error)` otherwise. A `timeout` that expires and a LAN host that is not found raise `TimeoutError`; error 14 stays with the negotiation timeout (`protocol/session.md`).
+- `connect` resolves once the session is connected and raises `ConnectionFailed(error)` otherwise. A `timeout` that expires and a LAN host that is not found raise `TimeoutError`; error 14 stays with the negotiation timeout (`protocol/session.md`). The LAN host lookup is bounded by the `timeout` argument, and by `negotiation_timeout` when `timeout` is unset.
 - `send(data, reliability=SendType.RELIABLE)` raises `ConnectionClosed` unless connected. The framing rules (`protocol/framing.md`) apply unchanged.
 - `recv()` returns the next whole packet in FIFO order. After a close it hands out the buffered packets first, then raises `ConnectionClosed(error)`.
-- `async for packet in connection` stops when this end closes and raises on an error close. A peer's close reaches the other end as `ConnectionClosed(DATA_CHANNEL_CLOSED)`, and a peer that vanishes is noticed only later (`protocol/transport.md`).
-- `close(error=None)` and `wait_closed() -> SessionError | None`. `Connection` is an async context manager that closes on exit.
+- `async for packet in connection` stops when this end closes and raises on an error close. A peer's ABORT reaches this end as `ConnectionClosed(DATA_CHANNEL_CLOSED)` and a peer's stream reset as `ConnectionClosed` with `.error` `None`. A peer that vanishes is noticed only later (`protocol/transport.md`).
+- `close()`, which takes no error because the wire carries no reason on close, and `wait_closed() -> SessionError | None`. `Connection` is an async context manager that closes on exit.
 - Success is `None`, never a `SessionError` member: `SessionError` holds only real errors, and every surface that reports an outcome is `SessionError | None`, with the wire code 0 mapped at the decode and encode boundary.
 
 ## Server and discovery
 
 - `serve` awaits `handler(connection)` once per connection, each in its own task.
-- `serve` raises from a `host` or `lan_host` that does not parse or cannot be bound.
+- `serve` raises from a `host` or `lan_host` that does not parse or cannot be bound, and from a `lan_port` that is in use. It never falls back to port 0 as BDS does (`protocol/lan-discovery.md`).
 - `Server` has `serve_forever`, `aclose`, `set_advertisement`, `local_id`, `bound_port` (HTTP), `lan_port` and `connections`, the open connections. `Server` is an async context manager, and `serve` and `connect` return an awaitable that is one too. `serve_forever` returns on `aclose` or cancellation.
 - `discover(timeout=...)` yields each responder once as a frozen `DiscoveredHost(network_id, advertisement, address)` and ends at the deadline. `DiscoveredHost` also reads the advertisement as `name`, `version`, `protocol`, `level`, `players`, `max_players`, `game_type`, `editor`, `hardcore`, `online_auth` and `self_signed_auth`, each `None` when the record does not parse. Break out of `discover` through `contextlib.aclosing`.
 - `discover` takes `timeout` (default 2.0 s), `bind_host`, `port`, `broadcast_host`, `broadcast_port` and `application_id`; the 2.0 s deadline and the first four are library options, not BDS settings.
@@ -53,8 +53,9 @@ The facade is `api.py`, `transport_api.py` and `__init__.py`, a thin asyncio lay
 - Every public exception derives from `NetherNetError`: `ConnectionFailed`, `ConnectionClosed` (`.error` is `None` when the session closed without an error), and `InvalidIdentity`.
 - Exception names carry no `Error` suffix, as in `websockets`.
 - Where BDS fails silently at startup, as on a bind or listen error, the library raises instead: the error propagates out of `serve()` and its startup, as with `asyncio.start_server`. What peers see on the wire still matches BDS.
-- The library accepts unknown query parameters for forward compatibility.
-- The library does the identity envelope only (`protocol/identity.md`). Authorizing a player (`validate_offer`, a raise refuses the offer) and pinning an operator key (`on_server_identity`) are the application's callbacks.
+- The library does the identity envelope only (`protocol/identity.md`). Authorizing a player and pinning an operator key are the application's callbacks.
+- `validate_offer(offer)` returns a bool: `False` refuses the offer with 37. Any exception from the accept path drops the offer with no reply, so an HTTP client gets the 504 after 10 s (`protocol/http-signaling.md`).
+- `on_server_identity(identity)` runs on an HTTP `connect` for the answer's verified operator identity, a `ServerIdentity` with `domain`, `claims`, `public_key` and `key_pin`, sync or async. It is skipped over LAN or when unset. A raise, or an answer whose identity fails verification, refuses the answer and the dialer closes with 37. The return value is ignored.
 
 ## Ask first
 

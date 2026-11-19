@@ -42,7 +42,8 @@ Open every datagram received (1.26.60):
 1. Drop a datagram under 32 bytes.
 2. Split it into the received MAC, its first 32 bytes, and `C`, the rest.
 3. `P = unpad(AES-256-ECB-decrypt(key, C))`. Drop it when `C` is not a whole number of blocks or decryption or unpadding fails.
-4. Compute `HMAC-SHA256(key, P)` and compare it with the received MAC in constant time, with `hmac.compare_digest`. Drop it when they differ.
+4. Compute `HMAC-SHA256(key, P)` and compare it with the received MAC in constant time. Drop it when they differ.
 5. Parse `P` as a discovery packet.
 
 - Drop a rejected datagram silently (1.26.60).
+- This library compares the MACs with `hmac.compare_digest`.

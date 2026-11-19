@@ -44,7 +44,7 @@ The envelope follows Mojang's public [NetherNet onboarding guide](https://github
 
 - The client's `token` is the player's `GameServerToken`, unchanged. It signs `fingerprints` with the player's key (1.26.60).
 - The client makes no assertion without a token and a key, and the negotiation fails with `SessionError.FAILED_TO_CREATE_IDENTITY_ASSERTION` (36) (1.26.60).
-- The client's `idp.domain` is the `iss` claim of the player's `GameServerToken`, or empty when that token does not parse (1.26.60). BDS does not check the offer's `idp.domain` (1.26.60).
+- The client's `idp.domain` is the `iss` claim of the player's `GameServerToken`, or empty when that token does not parse or has no `iss`, as a self-signed token has none. The operator's `idp.domain` is the fixed string `self`. BDS does not check the offer's `idp.domain` (1.26.60).
 - `cpk` in the `GameServerToken` is a string public key. Base64 DER SubjectPublicKeyInfo is the form BDS accepts (1.26.60).
 - That key is P-256, P-384 or P-521, or RSA with a modulus of exactly 1024, 2048 or 4096 bits. A `cpk` that is not a JSON string reads as empty and fails (1.26.60).
 - The string `cpk` is standard base64 decoded as `Verification` describes, but only `+` and `/` are digits 62 and 63. A `-` or `_` ends it (1.26.60).
@@ -53,12 +53,10 @@ The envelope follows Mojang's public [NetherNet onboarding guide](https://github
 - Its payload holds `xid`, `mid`, `nid`, `pid`, `xname`, `nname` and `pname` strings, `exp`, `cpk` (the same key as `x5u`), `aud`, `leguuid`, `ap` (an integer), and `"ishost":true` only for a host (1.26.60).
 - `aud` is `api://auth-minecraft-services/multiplayer`, and `leguuid` is a lowercase hyphenated UUID (1.26.60).
 - It has no `iss`, `iat` or `nbf`. `exp` is the signing time in Unix seconds plus 31536000, one year (1.26.60).
-- With no `iss`, the client's `idp.domain` for a self-signed token is empty (1.26.60).
 
 ## Operator assertion
 
-- The host's assertion is self-signed with the operator's key, `idp.domain` is `self` (1.26.60).
-- `idp.domain` is the fixed string `self`, not taken from the token. The operator token has no `iss` (1.26.60).
+- The host's assertion is self-signed with the operator's key. The operator token has no `iss` (1.26.60).
 - The operator's key is a P-384 key and signs with `ES384`. Every session of one BDS process uses the same key, and BDS makes a new one on every restart (1.26.60).
 - Its `token` is a JWT signed by the operator's key. The header is `{"alg":"ES384","x5u":<key>}`, `<key>` the operator's DER SubjectPublicKeyInfo in standard base64 with `+` and `/`, with no `typ` and no `kid` (1.26.60).
 - The payload is `{"cpk":{"crv":"P-384","kty":"EC","x":<x>,"y":<y>},"exp":<exp>,"iat":<iat>}`, `<x>` and `<y>` the 48-byte coordinates in base64url (1.26.60).
@@ -81,8 +79,8 @@ The envelope follows Mojang's public [NetherNet onboarding guide](https://github
 - `kty` is exactly `EC` or `RSA`, and `crv` exactly `P-256`, `P-384` or `P-521` (1.26.60).
 - EC `x` and `y` are big-endian integers of any non-empty length, so shorter values and leading zero bytes pass. The point must lie on the curve with both coordinates below the field prime (1.26.60).
 - An RSA JWK `n` decodes to exactly 128, 256 or 512 bytes, leading zero bytes counted. `e` is any non-empty big-endian value, leading zeros ignored (1.26.60).
-- This library rejects an RSA exponent that cryptography refuses (below 3 or even).
 - An RSA key pairs with any of `RS256`, `RS384` and `RS512` (1.26.60).
+- This library deliberately deviates: it rejects an RSA exponent that cryptography refuses, below 3 or even.
 - Both sides need a non-empty `fingerprints`, a non-empty `token` and a `cpk` claim that parses as a key, then verify `fingerprints` under `cpk` over the received SDP's payload (1.26.60).
 - The host verifying a player reads `cpk` as a string key and does not check the token's own signature (1.26.60).
 - `cpk` is the only member of a player's token the host reads. It reads no header member, so `alg`, `kid` and `x5u` are free (1.26.60).

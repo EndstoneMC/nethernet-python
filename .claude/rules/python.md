@@ -18,14 +18,14 @@ paths:
 
 - Target Python 3.11, the `requires-python` floor: no `type` statements, PEP 695 generics or other 3.12+ syntax.
 - Start every non-`__init__` module under `src/nethernet/` with `from __future__ import annotations`.
-- Type-hint every signature. There is no type checker; ruff (`E`, `W`, `F`, `I`, `N`, `UP`, `B`, line length 100) is the only gate.
+- Type-hint every signature. There is no type checker; ruff (`E`, `W`, `F`, `I`, `N`, `UP`, `B`, `D`, line length 100) is the only gate.
 - PEP 8 names everywhere, enum members in `UPPER_SNAKE_CASE`, enum classes with no C++ `E` prefix.
 - Wait on a `Future`, `Event` or `Queue`; never poll with `while ...: await asyncio.sleep(...)`.
 - Configuration arguments are keyword-only.
 - A closing coroutine is `close` or `aclose`, and the object is an async context manager.
 - Check an aiortc, aioice, aiohttp or cryptography API against its official reference for the installed version, never from memory.
 - Patch aioice or aiortc only under `transport/`, behind a feature check that skips the patch once the library fixes it, as `stun_integrity.install` checks `stun.Message.check_message_integrity`.
-- Public failures raise a `NetherNetError` subclass carrying `.error: SessionError | None`. A receive path drops what the rules say to drop and returns `None` or `False`, never raises.
+- Public failures raise a `NetherNetError` subclass carrying `.error: SessionError | None`, plus the builtins `TimeoutError`, `OSError` and `socket.gaierror` from `serve` and `connect`. A receive path drops what the rules say to drop and returns `None` or `False`, never raises.
 
 ## Docstrings
 

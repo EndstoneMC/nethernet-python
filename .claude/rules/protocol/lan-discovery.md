@@ -18,13 +18,14 @@ LAN peers find each other and exchange signaling over UDP with no server. `lan-c
 - After the bind it joins `ff02::1` on interface index 0 and sets `IPV6_MULTICAST_LOOP` 0. A failure of either option, or of `SO_RCVBUF`, is ignored (1.26.60).
 - When the IPv6 socket cannot be created, configured or bound for any reason but the port being in use, fall back to an IPv4 socket: `SO_BROADCAST` 1, `SO_RCVBUF` 32768, bound to `0.0.0.0` on the same port, with no multicast group (1.26.60).
 - When the port is in use, retry the whole sequence once on port 0, an ephemeral port. An in-use port on the IPv6 bind skips the IPv4 fallback (1.26.60).
+- This library's `serve` raises when `lan_port` is in use and does not retry on port 0 (`api.md`).
 - `SO_REUSEADDR` is not set, so a second endpoint on the same host lands on an ephemeral port (1.26.60).
 - Any other failure, or a failed retry, leaves the endpoint with no socket. It sends and receives nothing until the socket is rebuilt (1.26.60).
 - On the dual-stack socket an IPv4 destination goes out as its IPv4-mapped address `::ffff:a.b.c.d`. On the IPv4 socket an IPv6 destination fails with address family not supported (1.26.60).
 - A send that fails with a broken pipe error drops the socket and builds a new one as above, trying the discovery port first (1.26.60).
 - Peers learn an endpoint's real port from the UDP source address. Requests always go to the discovery port, so an endpoint on an ephemeral port gets Responses and Messages but no Requests (1.26.60).
 - BDS binds `[::]` on the discovery port at startup, exclusively: another process cannot bind it, even with `SO_REUSEADDR` (1.26.60).
-- BDS binds it whatever `enable-lan-visibility` says. With `enable-lan-visibility=false` it answers no Request but still processes Messages and Responses, the peer table and the probe included (1.26.60).
+- BDS binds it, and processes Messages and Responses, whatever `enable-lan-visibility` says (`config.md`) (1.26.60).
 - An idle BDS sends no Requests: a listener on `0.0.0.0` on the discovery port saw no datagram in 30 s (1.26.60).
 - This library hands one `socket.AF_INET6` socket, or the IPv4 fallback, to `create_datagram_endpoint(sock=...)`.
 
@@ -39,7 +40,7 @@ Every packet starts with this packed header, 20 bytes, no padding, all integers 
 | 4 | 8 | `SenderId` (`u64`): the sender's P2P `NetworkID` |
 | 12 | 8 | padding: zero on send, ignored on receive |
 
-- `SenderId` sits at offset 4, unaligned. A naturally aligned layout is wrong on the wire.
+- `SenderId` sits at offset 4, unaligned. A naturally aligned layout is wrong on the wire (1.26.60).
 
 ## Request
 
@@ -100,11 +101,11 @@ Type 2, a 32-byte header (1.26.60):
 
 - With N bytes of message data, `MessageDataLength = min(N, 1140)` and `PacketLength = 32 + MessageDataLength`. The datagram still carries all N bytes (1.26.60).
 - 1140 caps only the length fields, not the data. A message over 1140 bytes, such as a full SDP, goes out whole in one datagram, and a receiver sizes it from the datagram. BDS accepts an 1870-byte offer whose header says 1140 (1.26.60).
-- The message data is one signaling message string (`signaling.md`).
+- The message data is one signaling message string (`signaling.md`) (1.26.60).
 
 ## Receive
 
-- Open every datagram (`lan-crypto.md`) before parsing.
+- Open every datagram (`lan-crypto.md`) before parsing (1.26.60).
 - Drop a datagram under 4 bytes, then one shorter than its `PacketLength`, then one with an unknown `PacketType`, then one shorter than its type's header: 20, 24 or 32 bytes (1.26.60).
 - A datagram longer than its `PacketLength` is accepted (1.26.60).
 - The payload runs from the end of the header to the end of the datagram. `ApplicationDataLength` and `MessageDataLength` are ignored, and an empty payload is valid (1.26.60).

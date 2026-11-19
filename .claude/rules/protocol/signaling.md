@@ -52,7 +52,7 @@ A parsed message goes to the session of its sender `NetworkID` and connection id
 
 - A message that fails to parse is dropped silently. Nothing is sent back and no `SessionError` is reported (1.26.60).
 - `CONNECTREQUEST` first goes to the listener's application, with the identity assertion from the SDP if any (`identity.md`). With no application hook the offer is accepted (1.26.60).
-- An accepted `CONNECTREQUEST` with a new connection id opens an incoming session. One that matches an existing incoming session is ignored, and the session carries on. One that matches an outgoing session of the same remote is dropped silently (1.26.60).
+- An accepted `CONNECTREQUEST` with a new connection id opens an incoming session. One that matches an existing session is handled as `session.md` Routing says (1.26.60).
 - A declined `CONNECTREQUEST` is answered with `CONNECTERROR` carrying the same connection id and `SessionError.IDENTITY_NOT_ALLOWED` (37) (1.26.60).
 - `CONNECTRESPONSE` first goes to the dialer's application, with the identity assertion from the SDP. Accepted, the answer is applied. Declined, the dialer closes the session with `SessionError.IDENTITY_NOT_ALLOWED` (37) (1.26.60).
 - The listener ignores `CONNECTRESPONSE` and `CONNECTERROR` for its incoming sessions (1.26.60).
@@ -66,5 +66,6 @@ A parsed message goes to the session of its sender `NetworkID` and connection id
 
 - A message goes over LAN when LAN signaling is on, the remote is known from LAN discovery or was added as a LAN host, and either no other signaling channel is set or the session prefers LAN. Otherwise it goes over the other signaling channel (1.26.60).
 - An incoming session prefers the channel its `CONNECTREQUEST` came on, so one that came over LAN answers over LAN, its declining `CONNECTERROR` included. An outgoing session has no preference and uses the other channel when one is set (1.26.60).
+- A LAN send never reports an error (1.26.60).
 - With no route the send fails with `SessionError.NO_SIGNALING_CHANNEL` (24). A send for a session that no longer exists fails with `SessionError.SIGNALING_FAILED_TO_SEND` (26) (1.26.60).
-- A delivery error the signaling channel reports later closes the session with that error, except `SessionError.SIGNALING_UNICAST_MESSAGE_DELIVERY_FAILED` (19), which closes only an outgoing session (1.26.60).
+- A delivery error the signaling channel reports later closes the session with that error, except `SessionError.SIGNALING_UNICAST_MESSAGE_DELIVERY_FAILED` (19), which closes only an outgoing session. An error for a session already gone is dropped (1.26.60).

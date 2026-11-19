@@ -25,7 +25,7 @@ The routes follow Mojang's public [NetherNet onboarding guide](https://github.co
 - Every URL of a batch starts at once. The first to succeed wins, and the list order sets only the start order (1.26.60).
 - The whole probe times out after 6 s (1.26.60).
 - The direct-join probe is `GET <url>/v1/join` with no query and no extra headers, and a 3 s timeout per request. Any 2xx answer without a transport error succeeds, and the body is ignored (1.26.60).
-- So a host whose `GET /v1/join` body is empty, as BDS's with `enable-lan-visibility=false`, still passes the direct-join probe (1.26.60).
+- So a host whose `GET /v1/join` body is empty, as with LAN visibility off (`config.md`), still passes the direct-join probe (1.26.60).
 - The server list's probe is `GET <url>/v1/join?version=<game version>`, and it needs a 2xx answer whose body is non-empty and parses as the ping JSON (1.26.60).
 - The first URL that succeeds is cached for `H:P` and becomes the signaling base URL (1.26.60).
 - When every URL fails, the client falls back to RakNet only when a remote flag allows it, off by default. Otherwise it shows an error (1.26.60). This library has no RakNet: the dial fails with `SessionError.NO_SIGNALING_CHANNEL`.
@@ -36,17 +36,17 @@ The routes follow Mojang's public [NetherNet onboarding guide](https://github.co
 - The dedicated server listens on plain TCP on `server-port`, default 19132. `server-udp-ports` does not move it (1.26.60).
 - `server-ip` is the bind address. An IPv4 or IPv6 address, `127.0.0.1`, `::1` or an interface address, listens on that address alone, single stack (1.26.60).
 - With an empty bind address, the shipped default, the server listens on dual-stack `[::]` and falls back to `0.0.0.0` only when that fails. A bind address that does not parse or is not on the host leaves nothing listening, logs no error, and BDS still starts. The listen backlog is 64 (1.26.60).
-- This library raises the `OSError` or `socket.gaierror` from an unparseable or unbindable bind address when the server starts (`api.md`).
+- This library raises the `OSError` or `socket.gaierror` from an unparseable or unbindable bind address when the server starts, instead of starting with no listener (`api.md`).
 - The HTTP signaling server speaks plain HTTP/1.1. When a connection's first two bytes are `16 03`, it sends the 7 bytes `15 03 01 00 02 02 28`, a fatal TLS `handshake_failure` alert, and closes, so `https://` fails the handshake (1.26.60).
 - `GET /v1/join` answers `200 application/json` with the ping JSON, for example `{"name":"Dedicated Server","protocol":2225,"version":"1.26.60","level":"Bedrock level","players":0,"maxPlayers":10,"gameType":0}` (1.26.60).
-- BDS fills that body only with `enable-lan-visibility=true`. Otherwise the body is empty (1.26.60).
+- The body is empty when LAN visibility is off (`config.md`).
 - The GET route ignores a query string, so `/v1/join?version=...` gets the same answer (1.26.60).
 - `POST /v1/join/{networkId}` carries the offer SDP as its body, `{networkId}` the dialer's own id (1.26.60).
 - `{networkId}` is read as an unsigned `u64` in C `strtoull` base 0: `0x` hex, a leading `0` for octal, a leading `+` and leading whitespace are accepted. A `-`, no digits, a value over `u64` or any byte after the number is rejected. The POST route keeps the query string, so `?` is such a trailing byte (1.26.60).
-- This library strips and ignores any query string on every route, `GET /v1/join` and `POST /v1/join/{networkId}`, before routing and id parsing, so an unknown query parameter never causes an error. Vanilla clients send no query on a POST, so they see no difference (`api.md`).
 - So `0x10`, `010`, `+5` and a leading tab or vertical tab are accepted, `0x0` and `00` are the id 0, and `0x`, `08`, `-5` and 2^64 are rejected (1.26.60).
 - The path is not percent-decoded, and a literal space ends it. `%35`, `%20%205` and `/v1/join/ 5` are rejected (1.26.60).
 - The id is checked before the body (1.26.60).
+- This library strips and ignores any query string on every route, `GET /v1/join` and `POST /v1/join/{networkId}`, before routing and id parsing, so an unknown query parameter never causes an error. Vanilla clients send no query on a POST, so they see no difference (`api.md`).
 
 | Case | Status and reason | Body |
 | --- | --- | --- |
@@ -66,7 +66,7 @@ The routes follow Mojang's public [NetherNet onboarding guide](https://github.co
 - So a rejecting host's `CONNECTERROR` answers `200 application/sdp` whose body is the bare decimal `SessionError`, not SDP (1.26.60).
 - Over HTTP BDS answers an offer whose `a=identity` is missing or fails verification this way with `SessionError.IDENTITY_NOT_ALLOWED`, body `37`. The check runs whatever `online-mode` says, so a client dialing BDS signs its offer (1.26.60).
 - An offer that passes the identity check but fails in WebRTC gets no signal back, so it ends in the 504 after 10 s (1.26.60).
-- This library answers an offer the application refuses with the same `37`, and an offer whose accept hook raises gets no signal back, so it ends in the 504 after 10 s.
+- This library answers an offer the application refuses, `validate_offer` returning `False`, with the same `37`. An exception from the accept path drops the offer with no signal back, so it ends in the 504 after 10 s (`api.md`).
 
 ## Connections
 
@@ -92,7 +92,8 @@ The routes follow Mojang's public [NetherNet onboarding guide](https://github.co
 - The client trickles by default. Each `CANDIDATEADD` goes as its own POST whose body is the candidate. An attempt is one offer POST plus one POST per candidate, and none is retried (1.26.60).
 - This library's dialer sends one full-ICE offer POST with every candidate inline and no `CANDIDATEADD`, since aiortc gathers before the offer.
 - A 2xx answer without a transport error succeeds. A non-empty body is delivered as `CONNECTRESPONSE <sessionId> <body>` from the remote, `<sessionId>` that of the offer. An empty body delivers nothing (1.26.60).
-- The client does not inspect the body (1.26.60). This library raises a 2xx body that does not start with `v=` as the `SessionError` it holds, and as `SessionError.SIGNALING_PARSING_FAILURE` when it is neither.
+- The client does not inspect the body (1.26.60).
+- This library raises a 2xx body that does not start with `v=` as the `SessionError` it holds, and as `SessionError.SIGNALING_PARSING_FAILURE` (17) when it is neither.
 - Any other answer fails the dial (1.26.60):
 
 | Answer | `SessionError` |

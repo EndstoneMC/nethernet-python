@@ -12,7 +12,7 @@ paths:
 ## Dialer
 
 1. Create the peer connection and both data channels (`transport.md`), create the offer and set it as the local description (1.26.60).
-2. With an identity generator from the application, add the `a=identity` line to the offer (`identity.md`) (1.26.60).
+2. With an `identity_signer` from the application (`PlayerSigner` or `IdentitySigner`), add the `a=identity` line to the offer (`identity.md`) (1.26.60).
 3. Send `CONNECTREQUEST` with the connection id and the offer. The negotiation timeout runs from this send (1.26.60).
 4. Send each local candidate as `CANDIDATEADD` when trickle, and keep each received `CANDIDATEADD` as Candidates says (1.26.60).
 5. On an accepted `CONNECTRESPONSE` (Accept), set the answer as the remote description, then add the buffered candidates. The negotiation timeout stops here (1.26.60).
@@ -22,7 +22,7 @@ paths:
 
 1. On an accepted `CONNECTREQUEST` for a new remote and connection id (Routing), ask the application for the remote's connection flags (`errors.md`) and create the peer connection. Only `ConnectionFlags.RELAY_ONLY` acts here, making ICE relay-only. BDS sets only `NO_TCP_CANDIDATES`, so its listener sessions are not relay-only (1.26.60).
 2. Keep the offer's `a=identity` assertion as the remote identity (`identity.md`), set the offer as the remote description, create the answer and set it as the local description (1.26.60).
-3. Add the candidates buffered so far. Add the `a=identity` line when the application gave an identity generator and the offer did not come over LAN. Send `CONNECTRESPONSE` with the same connection id on the channel the offer came on (1.26.60).
+3. Add the candidates buffered so far. Add the `a=identity` line when the application gave an `identity_signer` and the offer did not come over LAN. Send `CONNECTRESPONSE` with the same connection id on the channel the offer came on (1.26.60).
 4. Send each local candidate as `CANDIDATEADD` when trickle, and add each received one (1.26.60).
 5. The data channels arrive from the on-data-channel event. ICE reaches connected: the session opens to the application, once (1.26.60).
 
@@ -56,11 +56,7 @@ paths:
 
 ## Signaling channel
 
-- An incoming session prefers the channel its offer came on. A dialer session has no preference (1.26.60).
-- A session sends over LAN when LAN signaling is on, the remote is on the LAN, and either no HTTP channel is set or the session prefers LAN. Otherwise it sends over HTTP (1.26.60).
-- With neither channel usable, the send fails and the session closes with `SessionError.NO_SIGNALING_CHANNEL` (24) (1.26.60).
-- A LAN send never reports an error (1.26.60).
-- A failed HTTP send closes the session with the error the channel reports, except `SessionError.SIGNALING_UNICAST_MESSAGE_DELIVERY_FAILED` (19) on any session that is not a dialer, which is ignored. An error for a session already gone is dropped (1.26.60).
+- A session's channel choice and the handling of a send failure are in `signaling.md` Sending. A failed send closes the session with the error it reports.
 
 ## Timeouts
 
@@ -76,23 +72,19 @@ The close reasons (1.26.60):
 | `SessionError` | Value | Side | When |
 | --- | ---: | --- | --- |
 | success, reported as `None` | 0 | both | the application closes the session, or a data channel closes with no error, whoever closed it (`transport.md` maps aiortc) |
-| `FAILED_TO_CREATE_PEER_CONNECTION` | 4 | both | the peer connection or a data channel cannot be created |
 | `ICE` | 5 | both | ICE fails, or the sweep finds ICE failed or closed |
-| `FAILED_TO_CREATE_OFFER` | 10 | dialer | the offer cannot be created |
-| `FAILED_TO_CREATE_ANSWER` | 11 | listener | the answer cannot be created |
-| `FAILED_TO_SET_LOCAL_DESCRIPTION` | 12 | both | the local description cannot be set or serialized |
-| `FAILED_TO_SET_REMOTE_DESCRIPTION` | 13 | both | the remote description cannot be set |
 | `NEGOTIATION_TIMEOUT_WAITING_FOR_RESPONSE` | 14 | dialer | the sweep finds the negotiation timeout expired |
 | `NO_SIGNALING_CHANNEL` | 24 | both | no signaling channel is usable |
 | `DATA_CHANNEL_CLOSED` | 32 | both | a data channel closes with an error, an SCTP abort from the remote included, or is missing at a state change (`transport.md` maps aiortc) |
 | `INVALID_ARGUMENT` | 34 | both | on connect, the SCTP max message size is 1 or less |
-| `FAILED_TO_CREATE_IDENTITY_ASSERTION` | 36 | both | the identity assertion cannot be created |
 | `IDENTITY_NOT_ALLOWED` | 37 | both | the application declines a `CONNECTRESPONSE` |
 | the carried value | any | dialer | a `CONNECTERROR` arrives |
 | the reported value | any | both | an HTTP send fails (Signaling channel) |
 
+- A failed negotiation step closes the session with its own code (`errors.md`) (1.26.60).
 - A session reports its close to the application once, with its `SessionError` and a JSON statistics summary, and closes its peer connection (1.26.60).
-- An application close removes the session and reports 0, which the library reports as `None`. It returns false with no report when no session matches, so a second close of one session returns false (1.26.60).
+- An application close removes the session and reports 0. It returns false with no report when no session matches, so a second close of one session returns false (1.26.60).
+- The library reports that 0 as `None` (`errors.md`).
 - BDS sends `CONNECTERROR` only to decline an offer (Accept), never on close. It sent none over LAN on idle, a silently cut socket, the peer's close, a game-layer disconnect or `stop`, and `stop` closed every session within 0.16 s (1.26.60).
 
 ## Application I/O
@@ -113,6 +105,6 @@ The close reasons (1.26.60):
 ## LAN sessions
 
 - A session created from a LAN message is non-trickle whatever the endpoint setting. BDS answers a LAN offer with one `CONNECTRESPONSE` carrying its candidates inline and sends no `CANDIDATEADD` (1.26.60).
-- It gets no identity generator, so its answer carries no `a=identity` (1.26.60).
+- It gets no `identity_signer`, so its answer carries no `a=identity` (1.26.60).
 - It replies over LAN (Signaling channel), and the accept decision is told it came over LAN (1.26.60).
 - A dialer the application opens toward a LAN host keeps the endpoint's trickle setting (1.26.60).
