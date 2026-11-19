@@ -1,121 +1,321 @@
-"""Session manager — routes signaling messages to per-connection sessions (SPEC.md s9).
-
-Owns the ``connection_id -> Session`` map. Outbound signaling goes through an injected
-``send_signal(remote_id, message)`` callback; inbound parsed signals are dispatched to the
-matching session, creating a listener session for an unknown CONNECTREQUEST.
-"""
-
 from __future__ import annotations
 
-from collections.abc import Callable
+import asyncio
+import inspect
+from collections.abc import Awaitable, Callable
+from dataclasses import dataclass
 
-from nethernet.errors import SessionError
+from nethernet.constants import DEFAULT_NEGOTIATION_TIMEOUT
+from nethernet.errors import ConnectionFlags, SendType, SessionError
+from nethernet.identity import fingerprint_entries
 from nethernet.network_id import NetworkID, new_connection_id
-from nethernet.session import DEFAULT_NEGOTIATION_TIMEOUT, Session
-from nethernet.signaling.messages import CandidateAdd, ConnectRequest, parse
+from nethernet.session import (
+    HttpSend,
+    LanSend,
+    Route,
+    Session,
+    SessionStatus,
+    SignalingChannels,
+    identity_value,
+)
+from nethernet.signaling.messages import (
+    CandidateAdd,
+    ConnectError,
+    ConnectRequest,
+    ConnectResponse,
+    parse,
+)
+from nethernet.transport.peer_connection import PeerConnection
 
-# Cap on candidates buffered for a not-yet-created session, to bound memory from stray messages.
-_MAX_PENDING_CANDIDATES = 64
+SWEEP_INTERVAL = 5.0
+
+
+@dataclass(frozen=True)
+class AcceptRequest:
+    remote_id: NetworkID
+    connection_id: int
+    is_offer: bool
+    identity: str | None
+    fingerprints: list[tuple[str, str]]
+    via_lan: bool
+    sdp: str
+
+
+Accept = Callable[[AcceptRequest], Awaitable[bool] | bool]
 
 
 class SessionManager:
-    """Creates and routes sessions for one local peer."""
-
     def __init__(
         self,
         *,
         local_id: NetworkID,
-        send_signal: Callable[[NetworkID, str], None],
-        on_session_open: Callable[[Session], None] | None = None,
-        on_session_close: Callable[[Session, SessionError], None] | None = None,
-        on_packet: Callable[[Session, bytes], None] | None = None,
+        lan_send: LanSend | None = None,
+        http_send: HttpSend | None = None,
+        is_lan_peer: Callable[[NetworkID], bool] | None = None,
+        lan_signaling: bool = True,
+        trickle: bool = True,
         ice_servers: list | None = None,
-        relay_only: bool = False,
         negotiation_timeout: float = DEFAULT_NEGOTIATION_TIMEOUT,
+        accept: Accept | None = None,
+        connection_flags: Callable[[NetworkID], ConnectionFlags] | None = None,
+        identity: Callable[[str], str] | None = None,
+        on_session_open: Callable[[Session], None] | None = None,
+        on_session_close: Callable[[Session, SessionError, str], None] | None = None,
+        on_packet: Callable[[Session, bytes], None] | None = None,
+        peer_connection_factory: Callable[..., PeerConnection] = PeerConnection,
     ) -> None:
         self._local_id = local_id
-        self._send_signal = send_signal
+        self._channels = SignalingChannels(
+            lan_send=lan_send,
+            http_send=http_send,
+            is_lan_peer=is_lan_peer,
+            lan_signaling=lan_signaling,
+        )
+        self._trickle = trickle
+        self._ice_servers = ice_servers
+        self._negotiation_timeout = negotiation_timeout
+        self._accept = accept
+        self._connection_flags = connection_flags
+        self._identity = identity
         self._on_session_open = on_session_open
         self._on_session_close = on_session_close
         self._on_packet = on_packet
-        self._ice_servers = ice_servers
-        self._relay_only = relay_only
-        self._negotiation_timeout = negotiation_timeout
-        self._sessions: dict[int, Session] = {}
-        # Candidates may arrive (UDP reordering) before the CONNECTREQUEST that creates the
-        # listener session; buffer them per connection id and flush once it exists.
-        self._pending_candidates: dict[int, list[CandidateAdd]] = {}
+        self._factory = peer_connection_factory
+
+        self._sessions: dict[NetworkID, dict[int, Session]] = {}
+        self._tasks: set[asyncio.Task] = set()
+        self._closing: set[asyncio.Task] = set()
+        self._sweep_handle: asyncio.TimerHandle | None = None
+        self._closed = False
 
     @property
     def local_id(self) -> NetworkID:
         return self._local_id
 
-    async def connect(self, remote_id: NetworkID) -> Session:
-        """Open a new outgoing (dialer) session to ``remote_id`` (SPEC.md s9.1)."""
-        session = self._create_session(new_connection_id(), remote_id, is_dialer=True)
-        await session.start()
+    @property
+    def sessions(self) -> list[Session]:
+        return [session for by_id in self._sessions.values() for session in by_id.values()]
+
+    def get(self, remote_id: NetworkID, connection_id: int) -> Session | None:
+        return self._sessions.get(remote_id, {}).get(connection_id)
+
+    def dial(
+        self,
+        remote_id: NetworkID,
+        *,
+        identity: Callable[[str], str] | None = None,
+        connection_id: int | None = None,
+    ) -> Session:
+        if connection_id is None:
+            connection_id = new_connection_id()
+        session = self._new_session(remote_id, connection_id, is_dialer=True, trickle=self._trickle)
+        error = session.create_peer_connection(relay_only=self._relay_only(remote_id))
+        if error is not None:
+            asyncio.get_running_loop().call_soon(session.close, error)
+        else:
+            self._spawn(session.start(identity=identity))
         return session
 
-    async def handle_signal(self, sender_id: NetworkID, message: str) -> None:
-        """Dispatch an inbound signaling string to the matching session (SPEC.md s5, s9)."""
+    async def handle_signal(
+        self, sender: NetworkID, message: str, *, via_lan: bool = False
+    ) -> None:
         parsed = parse(message)
-        if parsed is None:
-            return  # unrecognized / malformed -> ignore (SPEC.md s5.2)
-        session = self._sessions.get(parsed.connection_id)
+        if parsed is None or self._closed:
+            return
+        if isinstance(parsed, ConnectRequest):
+            await self._handle_request(sender, parsed, via_lan)
+        elif isinstance(parsed, ConnectResponse):
+            await self._handle_response(sender, parsed, via_lan)
+        elif isinstance(parsed, ConnectError):
+            session = self.get(sender, parsed.connection_id)
+            if session is not None and session.is_dialer:
+                session.close(parsed.error)
+        elif isinstance(parsed, CandidateAdd):
+            session = self.get(sender, parsed.connection_id)
+            if session is None:
+                session = self._new_session(
+                    sender,
+                    parsed.connection_id,
+                    is_dialer=False,
+                    trickle=self._trickle and not via_lan,
+                )
+            await session.add_candidate(parsed.candidate)
+
+    async def _handle_request(
+        self, sender: NetworkID, request: ConnectRequest, via_lan: bool
+    ) -> None:
+        accepted = await self._decide(sender, request.connection_id, request.sdp, True, via_lan)
+        if accepted is None:
+            return
+        if not accepted:
+            reply = ConnectError(request.connection_id, SessionError.IDENTITY_NOT_ALLOWED)
+            self._reply(sender, reply.serialize(), via_lan)
+            return
+        try:
+            relay_only = self._relay_only(sender)
+        except Exception:
+            return
+        session = self.get(sender, request.connection_id)
         if session is None:
-            if isinstance(parsed, ConnectRequest):
-                session = self._create_session(parsed.connection_id, sender_id, is_dialer=False)
-                await session.handle_signal(parsed)
-                await self._flush_pending_candidates(session)
-                return
-            if isinstance(parsed, CandidateAdd):
-                self._buffer_pending_candidate(parsed)  # session not created yet
-                return
-            return  # no such session and not a new request -> ignore
-        await session.handle_signal(parsed)
+            session = self._new_session(
+                sender,
+                request.connection_id,
+                is_dialer=False,
+                trickle=self._trickle and not via_lan,
+            )
+        elif session.is_dialer or session.offer_received:
+            return
+        await session.apply_offer(
+            request.sdp,
+            via_lan=via_lan,
+            relay_only=relay_only,
+            identity=self._identity,
+        )
 
-    def _buffer_pending_candidate(self, candidate: CandidateAdd) -> None:
-        buffer = self._pending_candidates.setdefault(candidate.connection_id, [])
-        if len(buffer) < _MAX_PENDING_CANDIDATES:
-            buffer.append(candidate)
+    async def _handle_response(
+        self, sender: NetworkID, response: ConnectResponse, via_lan: bool
+    ) -> None:
+        accepted = await self._decide(sender, response.connection_id, response.sdp, False, via_lan)
+        session = self.get(sender, response.connection_id)
+        if session is None or accepted is None:
+            return
+        if not accepted:
+            session.close(SessionError.IDENTITY_NOT_ALLOWED)
+        elif session.is_dialer:
+            await session.apply_answer(response.sdp)
 
-    async def _flush_pending_candidates(self, session: Session) -> None:
-        for candidate in self._pending_candidates.pop(session.connection_id, []):
-            await session.handle_signal(candidate)
+    async def _decide(
+        self, sender: NetworkID, connection_id: int, sdp: str, is_offer: bool, via_lan: bool
+    ) -> bool | None:
+        if self._accept is None:
+            return True
+        request = AcceptRequest(
+            remote_id=sender,
+            connection_id=connection_id,
+            is_offer=is_offer,
+            identity=identity_value(sdp),
+            fingerprints=fingerprint_entries(sdp),
+            via_lan=via_lan,
+            sdp=sdp,
+        )
+        try:
+            result = self._accept(request)
+            if inspect.isawaitable(result):
+                result = await result
+        except Exception:
+            return None
+        return bool(result)
 
-    def _create_session(
-        self, connection_id: int, remote_id: NetworkID, *, is_dialer: bool
+    def _reply(self, remote_id: NetworkID, message: str, via_lan: bool) -> None:
+        if via_lan:
+            if self._channels.lan_send is not None:
+                self._channels.lan_send(remote_id, message)
+        elif self._channels.http_send is not None:
+            self._spawn(self._channels.send(Route.HTTP, remote_id, message))
+
+    def _relay_only(self, remote_id: NetworkID) -> bool:
+        if self._connection_flags is None:
+            return False
+        return bool(self._connection_flags(remote_id) & ConnectionFlags.RELAY_ONLY)
+
+    def _new_session(
+        self, remote_id: NetworkID, connection_id: int, *, is_dialer: bool, trickle: bool
     ) -> Session:
         session = Session(
             connection_id=connection_id,
-            local_id=self._local_id,
             remote_id=remote_id,
             is_dialer=is_dialer,
-            send_signal=lambda message: self._send_signal(remote_id, message),
-            on_open=self._handle_session_open,
-            on_close=self._handle_session_close,
-            on_packet=self._handle_packet,
+            channels=self._channels,
+            trickle=trickle,
             ice_servers=self._ice_servers,
-            relay_only=self._relay_only,
             negotiation_timeout=self._negotiation_timeout,
+            peer_connection_factory=self._factory,
+            on_open=self._handle_open,
+            on_close=self._handle_close,
+            on_packet=self._on_packet,
         )
-        self._sessions[connection_id] = session
+        self._sessions.setdefault(remote_id, {})[connection_id] = session
+        self._schedule_sweep()
         return session
 
-    def _handle_session_open(self, session: Session) -> None:
+    def _spawn(self, coroutine: Awaitable[object]) -> None:
+        task = asyncio.ensure_future(coroutine)
+        self._tasks.add(task)
+        task.add_done_callback(self._tasks.discard)
+
+    def _schedule_sweep(self) -> None:
+        if self._sweep_handle is None and not self._closed:
+            loop = asyncio.get_running_loop()
+            self._sweep_handle = loop.call_later(SWEEP_INTERVAL, self._sweep)
+
+    def _sweep(self) -> None:
+        loop = asyncio.get_running_loop()
+        now = loop.time()
+        for session in self.sessions:
+            session.sweep(now)
+        self._sweep_handle = loop.call_later(SWEEP_INTERVAL, self._sweep)
+
+    def _handle_open(self, session: Session) -> None:
         if self._on_session_open is not None:
             self._on_session_open(session)
 
-    def _handle_session_close(self, session: Session, error: SessionError) -> None:
-        self._sessions.pop(session.connection_id, None)
+    def _handle_close(self, session: Session, error: SessionError, summary: str) -> None:
+        by_id = self._sessions.get(session.remote_id)
+        if by_id is not None and by_id.get(session.connection_id) is session:
+            del by_id[session.connection_id]
+            if not by_id:
+                del self._sessions[session.remote_id]
+        if session.close_task is not None:
+            self._closing.add(session.close_task)
+            session.close_task.add_done_callback(self._closing.discard)
         if self._on_session_close is not None:
-            self._on_session_close(session, error)
+            self._on_session_close(session, error, summary)
 
-    def _handle_packet(self, session: Session, data: bytes) -> None:
-        if self._on_packet is not None:
-            self._on_packet(session, data)
+    def send(
+        self,
+        remote_id: NetworkID,
+        connection_id: int,
+        data: bytes,
+        send_type: SendType = SendType.RELIABLE,
+    ) -> bool:
+        session = self.get(remote_id, connection_id)
+        return session is not None and session.send(data, send_type)
+
+    def read(
+        self, remote_id: NetworkID, connection_id: int, max_size: int | None = None
+    ) -> bytes | None:
+        session = self.get(remote_id, connection_id)
+        return session.read(max_size) if session is not None else None
+
+    def peek(self, remote_id: NetworkID, connection_id: int) -> int | None:
+        session = self.get(remote_id, connection_id)
+        return session.peek() if session is not None else None
+
+    def state(self, remote_id: NetworkID, connection_id: int) -> SessionStatus | None:
+        if remote_id == self._local_id:
+            return None
+        session = self.get(remote_id, connection_id)
+        return session.status() if session is not None else None
+
+    def close(self, remote_id: NetworkID, connection_id: int) -> bool:
+        session = self.get(remote_id, connection_id)
+        return session is not None and session.close(SessionError.NONE)
+
+    async def __aenter__(self) -> SessionManager:
+        return self
+
+    async def __aexit__(self, *exc_info: object) -> None:
+        await self.aclose()
 
     async def aclose(self) -> None:
-        for session in list(self._sessions.values()):
-            await session.aclose()
-        self._sessions.clear()
+        self._closed = True
+        if self._sweep_handle is not None:
+            self._sweep_handle.cancel()
+            self._sweep_handle = None
+        for session in self.sessions:
+            session.close(SessionError.NONE)
+        for task in list(self._tasks):
+            task.cancel()
+        await asyncio.gather(*self._tasks, return_exceptions=True)
+        if self._closing:
+            await asyncio.shield(asyncio.gather(*self._closing, return_exceptions=True))

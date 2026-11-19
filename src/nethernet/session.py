@@ -1,237 +1,506 @@
-"""Session negotiation state machine — SPEC.md s9.
-
-A ``Session`` is one connection attempt between two peers, identified by a 64-bit
-``connection_id``. It drives a :class:`~nethernet.transport.peer_connection.PeerConnection`,
-exchanges signaling messages through an injected ``send_signal`` callback, and enforces the
-negotiation timeout (SPEC.md s9.4).
-
-This module implements the **dialer** (offerer) role (SPEC.md s9.1); the **listener** role
-(s9.2) is added on top of the same class.
-"""
-
 from __future__ import annotations
 
 import asyncio
-from collections.abc import Callable
-from enum import Enum, auto
+import ipaddress
+import json
+from collections.abc import Awaitable, Callable
+from dataclasses import dataclass, replace
+from enum import Enum
 
 from nethernet.constants import DEFAULT_NEGOTIATION_TIMEOUT
-from nethernet.errors import SendType, SessionError
+from nethernet.errors import ConnectionFailed, SendType, SessionError
+from nethernet.identity import strip_identity
 from nethernet.network_id import NetworkID
-from nethernet.signaling.messages import (
-    CandidateAdd,
-    ConnectError,
-    ConnectRequest,
-    ConnectResponse,
-    SignalingMessage,
-)
+from nethernet.signaling.messages import CandidateAdd, ConnectRequest, ConnectResponse
 from nethernet.transport.peer_connection import PeerConnection, strip_candidates
+
+LanSend = Callable[[NetworkID, str], None]
+HttpSend = Callable[[NetworkID, str], Awaitable[SessionError]]
+
+_IDENTITY_PREFIX = "a=identity:"
+_ACTIVE_ICE_STATES = frozenset({"connected", "completed", "disconnected"})
+_ERRORED_ICE_STATES = frozenset({"failed", "closed"})
+_SNAPSHOT_INTERVAL = 1
+_SNAPSHOT_MAX_AGE = 2.0
 
 
 class SessionState(Enum):
-    IDLE = auto()
-    OFFER_SENT = auto()  # dialer: offer sent, awaiting response
-    ANSWER_SENT = auto()  # listener: answer sent, awaiting ICE
-    NEGOTIATING = auto()  # dialer: answer received, awaiting ICE
-    CONNECTED = auto()
-    CLOSED = auto()
+    """Whether a session is connecting, active or errored, as its ICE state says."""
+
+    CONNECTING = "connecting"
+    ACTIVE = "active"
+    ERRORED = "errored"
+
+
+@dataclass(frozen=True)
+class SessionStatus:
+    state: SessionState
+    ice_state: str
+    rtt_ms: int | None = None
+    bytes_sent: int = 0
+    send_rate: int = 0
+    bytes_received: int = 0
+    packets_sent: int = 0
+    relay: bool = False
+
+
+class Route(Enum):
+    LAN = "lan"
+    HTTP = "http"
+
+
+@dataclass
+class SignalingChannels:
+    lan_send: LanSend | None = None
+    http_send: HttpSend | None = None
+    is_lan_peer: Callable[[NetworkID], bool] | None = None
+    lan_signaling: bool = True
+
+    def lan_usable(self, remote_id: NetworkID) -> bool:
+        if not self.lan_signaling or self.lan_send is None:
+            return False
+        return self.is_lan_peer is None or self.is_lan_peer(remote_id)
+
+    def route(self, remote_id: NetworkID, *, prefers_lan: bool) -> Route | None:
+        if self.lan_usable(remote_id) and (self.http_send is None or prefers_lan):
+            return Route.LAN
+        if self.http_send is not None:
+            return Route.HTTP
+        return None
+
+    async def send(self, route: Route, remote_id: NetworkID, message: str) -> SessionError:
+        if route is Route.LAN:
+            if self.lan_send is not None:
+                self.lan_send(remote_id, message)
+            return SessionError.NONE
+        if self.http_send is None:
+            return SessionError.NO_SIGNALING_CHANNEL
+        return SessionError(await self.http_send(remote_id, message))
+
+
+def identity_value(sdp: str) -> str | None:
+    for line in sdp.splitlines():
+        if line[: len(_IDENTITY_PREFIX)].lower() == _IDENTITY_PREFIX:
+            return line[len(_IDENTITY_PREFIX) :]
+    return None
+
+
+def anonymize_ip(ip: str) -> str:
+    try:
+        address = ipaddress.ip_address(ip)
+    except ValueError:
+        return ip
+    if address.version == 4:
+        return ".".join(str(address).split(".")[:3] + ["0"])
+    head = address.compressed.split("::")[0]
+    groups = [group for group in head.split(":") if group][:3]
+    return ":".join(groups) + "::"
+
+
+def candidate_info(text: str) -> tuple[tuple[str, str, str, str], dict[str, str]] | None:
+    value = text[len("a=") :] if text.startswith("a=") else text
+    if value.startswith("candidate:"):
+        value = value[len("candidate:") :]
+    fields = value.split()
+    if len(fields) < 8 or fields[6] != "typ":
+        return None
+    protocol, ip, port, kind = fields[2].lower(), fields[4], fields[5], fields[7]
+    extras = dict(zip(fields[8::2], fields[9::2], strict=False))
+    info = {
+        "type": kind,
+        "ip": anonymize_ip(ip),
+        "url": extras.get("url", ""),
+    }
+    return (protocol, ip, port, kind), info
+
+
+def _milliseconds(seconds: float | None) -> int | None:
+    return None if seconds is None else int(seconds * 1000)
+
+
+class _Rate:
+    def __init__(self) -> None:
+        self.current = 0
+        self.average = 0.0
+        self.maximum = 0
+        self._samples = 0
+
+    def update(self, value: int) -> None:
+        self.current = value
+        self._samples += 1
+        self.average += (value - self.average) / self._samples
+        self.maximum = max(self.maximum, value)
+
+    def summary(self) -> dict[str, float]:
+        return {"current": self.current, "average": self.average, "maximum": self.maximum}
+
+
+class Statistics:
+    def __init__(self, now: float) -> None:
+        self.bytes_sent = 0
+        self.bytes_received = 0
+        self.packets_sent = 0
+        self.packets_received = 0
+        self.snapshot: SessionStatus | None = None
+        self.taken_at: float | None = None
+        self._base_time = now
+        self._base = (0, 0)
+        self._send_rate = _Rate()
+        self._receive_rate = _Rate()
+        self._local: dict[tuple[str, str, str, str], dict[str, str]] = {}
+        self._remote: dict[tuple[str, str, str, str], dict[str, str]] = {}
+        self._pair_states: list[str] = []
+        self._pair: dict[str, object] = {}
+        self._rtt: float | None = None
+        self._responses: int | None = None
+        self._relay = False
+
+    def see_local_candidate(self, text: str) -> None:
+        self._see(self._local, text)
+
+    def see_remote_candidate(self, text: str) -> None:
+        self._see(self._remote, text)
+
+    @staticmethod
+    def _see(table: dict, text: str) -> None:
+        parsed = candidate_info(text)
+        if parsed is not None and parsed[0] not in table:
+            table[parsed[0]] = parsed[1]
+
+    def take(self, now: float, state: SessionState, ice_state: str, pair: dict | None) -> bool:
+        elapsed = int(now - (self.taken_at if self.taken_at is not None else self._base_time))
+        if elapsed < _SNAPSHOT_INTERVAL:
+            return False
+        sent, received = self.bytes_sent, self.bytes_received
+        self._send_rate.update((sent - self._base[0]) // elapsed)
+        self._receive_rate.update((received - self._base[1]) // elapsed)
+        self._base = (sent, received)
+        self.taken_at = now
+        if pair is not None:
+            self._take_pair(pair)
+        self.snapshot = SessionStatus(
+            state=state,
+            ice_state=ice_state,
+            rtt_ms=_milliseconds(self._rtt),
+            bytes_sent=sent,
+            send_rate=self._send_rate.current,
+            bytes_received=received,
+            packets_sent=self.packets_sent,
+            relay=self._relay,
+        )
+        return True
+
+    def _take_pair(self, pair: dict) -> None:
+        state = str(pair.get("state", ""))
+        if not self._pair_states or self._pair_states[-1] != state:
+            self._pair_states.append(state)
+        self._rtt = pair.get("rtt")
+        self._responses = pair.get("responses_received")
+        local = candidate_info(str(pair.get("local", "")))
+        remote = candidate_info(str(pair.get("remote", "")))
+        if local is not None:
+            self._local.setdefault(local[0], local[1])
+        if remote is not None:
+            self._remote.setdefault(remote[0], remote[1])
+            self._relay = remote[0][3] == "relay"
+        self._pair = {
+            "local": local[1] if local is not None else None,
+            "remote": remote[1] if remote is not None else None,
+        }
+
+    @property
+    def avgrtt(self) -> float | None:
+        if self._rtt is None:
+            return None
+        return self._rtt / self._responses if self._responses else self._rtt
+
+    def summary(self) -> str:
+        return json.dumps(
+            {
+                "rtt": _milliseconds(self._rtt),
+                "avgrtt": _milliseconds(self.avgrtt),
+                "responsesReceived": self._responses,
+                "bytesSent": self.bytes_sent,
+                "bytesReceived": self.bytes_received,
+                "packetsSent": self.packets_sent,
+                "packetsReceived": self.packets_received,
+                "sendRate": self._send_rate.summary(),
+                "receiveRate": self._receive_rate.summary(),
+                "relay": self._relay,
+                "localCandidates": list(self._local.values()),
+                "remoteCandidates": list(self._remote.values()),
+                "candidatePair": {**self._pair, "states": list(self._pair_states)},
+            },
+            separators=(",", ":"),
+        )
 
 
 class Session:
-    """One negotiation/connection attempt between two peers (SPEC.md s9)."""
-
     def __init__(
         self,
         *,
         connection_id: int,
-        local_id: NetworkID,
         remote_id: NetworkID,
         is_dialer: bool,
-        send_signal: Callable[[str], None],
-        on_open: Callable[[Session], None] | None = None,
-        on_close: Callable[[Session, SessionError], None] | None = None,
-        on_packet: Callable[[Session, bytes], None] | None = None,
+        channels: SignalingChannels,
+        trickle: bool = True,
         ice_servers: list | None = None,
-        relay_only: bool = False,
         negotiation_timeout: float = DEFAULT_NEGOTIATION_TIMEOUT,
+        peer_connection_factory: Callable[..., PeerConnection] = PeerConnection,
+        on_open: Callable[[Session], None] | None = None,
+        on_close: Callable[[Session, SessionError, str], None] | None = None,
+        on_packet: Callable[[Session, bytes], None] | None = None,
     ) -> None:
         self.connection_id = connection_id
-        self.local_id = local_id
         self.remote_id = remote_id
         self.is_dialer = is_dialer
-        self.state = SessionState.IDLE
+        self.trickle = trickle
+        self.remote_identity: str | None = None
+        self.offer_received = False
+        self.prefers_lan = False
+        self.close_task: asyncio.Task | None = None
 
-        self._send_signal = send_signal
+        self._channels = channels
+        self._ice_servers = ice_servers
+        self._negotiation_timeout = max(0.0, negotiation_timeout)
+        self._factory = peer_connection_factory
         self._on_open = on_open
         self._on_close = on_close
         self._on_packet = on_packet
-        self._negotiation_timeout = negotiation_timeout
 
-        self._timeout_handle: asyncio.TimerHandle | None = None
-        self._close_task: asyncio.Task | None = None
+        self._loop = asyncio.get_running_loop()
+        self._pc: PeerConnection | None = None
+        self._deferred: list[str] = []
+        self._outbox: list[tuple[bytes, SendType]] = []
+        self._answer_applied = False
+        self._deadline: float | None = None
+        self._opened = False
+        self._closed = False
+        self._tasks: set[asyncio.Task] = set()
+        self._stats = Statistics(self._loop.time())
 
-        self._pc = PeerConnection(
-            is_dialer=is_dialer,
-            ice_servers=ice_servers,
-            relay_only=relay_only,
-            on_packet=self._handle_packet,
-            on_channels_open=self._handle_channels_open,
-            on_connection_state_change=self._handle_connection_state,
-        )
+    @property
+    def closed(self) -> bool:
+        return self._closed
 
-    # -- dialer entry point ------------------------------------------------------------
+    @property
+    def opened(self) -> bool:
+        return self._opened
 
-    async def start(self) -> None:
-        """Dialer: create the offer and send CONNECTREQUEST + trickle candidates (SPEC.md s9.1)."""
-        offer, candidates = strip_candidates(await self._pc.create_offer())
-        self.state = SessionState.OFFER_SENT
-        self._send_signal(ConnectRequest(self.connection_id, offer).serialize())
-        self._send_candidates(candidates)
-        self._arm_timeout(SessionError.NEGOTIATION_TIMEOUT_WAITING_FOR_RESPONSE)
+    @property
+    def peer_connection(self) -> PeerConnection | None:
+        return self._pc
 
-    # -- full-ICE entry points (out-of-band signaling, e.g. HTTP POST /v1/join) ---------
+    @property
+    def deadline(self) -> float | None:
+        return self._deadline
 
-    async def offer(self) -> str:
-        """Dialer: create the offer and return the full-ICE SDP (all candidates embedded).
+    def create_peer_connection(self, *, relay_only: bool = False) -> SessionError | None:
+        try:
+            self._pc = self._factory(
+                is_dialer=self.is_dialer,
+                ice_servers=self._ice_servers,
+                trickle=self.trickle,
+                relay_only=relay_only,
+                on_packet=self._handle_packet if self._on_packet is not None else None,
+                on_ice_connected=self._handle_ice_connected,
+                on_ice_failed=self._handle_ice_failed,
+                on_close=self.close,
+            )
+        except ConnectionFailed as exc:
+            return exc.error
+        outbox, self._outbox = self._outbox, []
+        for data, send_type in outbox:
+            self._pc.send(data, send_type)
+        return None
 
-        The caller delivers it out of band (e.g. HTTP signaling) and feeds the remote answer
-        back via :meth:`accept_answer`. No signaling messages are sent.
-        """
-        sdp = await self._pc.create_offer()
-        self.state = SessionState.OFFER_SENT
-        self._arm_timeout(SessionError.NEGOTIATION_TIMEOUT_WAITING_FOR_RESPONSE)
-        return sdp
-
-    async def accept_answer(self, answer_sdp: str) -> None:
-        """Dialer: apply a full-ICE answer received out of band."""
-        if self.state != SessionState.OFFER_SENT:
+    async def start(self, *, identity: Callable[[str], str] | None = None) -> None:
+        if self._pc is None or self._closed:
             return
-        self.state = SessionState.NEGOTIATING
-        self._arm_timeout(SessionError.NEGOTIATION_TIMEOUT_WAITING_FOR_ACCEPT)
-        await self._pc.set_remote_answer(answer_sdp)
-
-    async def answer(self, offer_sdp: str) -> str:
-        """Listener: apply a full-ICE offer and return the full-ICE answer SDP."""
-        sdp = await self._pc.create_answer(offer_sdp)
-        self.state = SessionState.ANSWER_SENT
-        self._arm_timeout(SessionError.NEGOTIATION_TIMEOUT_WAITING_FOR_ACCEPT)
-        return sdp
-
-    # -- inbound signaling -------------------------------------------------------------
-
-    async def handle_signal(self, message: SignalingMessage) -> None:
-        """Dispatch an inbound signaling message for this session."""
-        if self.state == SessionState.CLOSED:
+        try:
+            offer = await self._pc.create_offer(identity=identity)
+        except ConnectionFailed as exc:
+            self.close(exc.error)
             return
-        if isinstance(message, ConnectError):
-            self._handle_connect_error(message)
-        elif isinstance(message, CandidateAdd):
-            await self._pc.add_remote_candidate(message.candidate)
-        elif self.is_dialer and isinstance(message, ConnectResponse):
-            await self._handle_response(message)
-        elif not self.is_dialer and isinstance(message, ConnectRequest):
-            await self._handle_request(message)
-        # other messages (e.g. ConnectRequest to a dialer) are ignored
-
-    async def _handle_response(self, message: ConnectResponse) -> None:
-        if self.state != SessionState.OFFER_SENT:
+        if self._closed:
             return
-        self.state = SessionState.NEGOTIATING
-        self._arm_timeout(SessionError.NEGOTIATION_TIMEOUT_WAITING_FOR_ACCEPT)
-        await self._pc.set_remote_answer(message.sdp)
+        if self._send_description(ConnectRequest, offer):
+            self._deadline = self._loop.time() + self._negotiation_timeout
 
-    async def _handle_request(self, message: ConnectRequest) -> None:
-        """Listener: apply the offer, answer, send CONNECTRESPONSE + candidates (SPEC.md s9.2)."""
-        if self.state != SessionState.IDLE:
+    async def apply_offer(
+        self,
+        sdp: str,
+        *,
+        via_lan: bool,
+        relay_only: bool = False,
+        identity: Callable[[str], str] | None = None,
+    ) -> None:
+        if self._closed or self.offer_received:
             return
-        answer, candidates = strip_candidates(await self._pc.create_answer(message.sdp))
-        self.state = SessionState.ANSWER_SENT
-        self._send_signal(ConnectResponse(self.connection_id, answer).serialize())
-        self._send_candidates(candidates)
-        self._arm_timeout(SessionError.NEGOTIATION_TIMEOUT_WAITING_FOR_ACCEPT)
+        self.offer_received = True
+        self.prefers_lan = via_lan
+        error = self.create_peer_connection(relay_only=relay_only)
+        if error is not None:
+            self.close(error)
+            return
+        self.remote_identity = identity_value(sdp)
+        for candidate in strip_candidates(sdp)[1]:
+            self._stats.see_remote_candidate(candidate)
+        pc = self._pc
+        deferred, self._deferred = self._deferred, []
+        try:
+            for candidate in deferred:
+                await pc.add_remote_candidate(candidate)
+            answer = await pc.create_answer(
+                strip_identity(sdp), identity=None if via_lan else identity
+            )
+        except ConnectionFailed as exc:
+            self.close(exc.error)
+            return
+        if not self._closed:
+            self._send_description(ConnectResponse, answer)
 
-    def _send_candidates(self, candidates: list[str]) -> None:
+    async def apply_answer(self, sdp: str) -> None:
+        if not self.is_dialer or self._answer_applied or self._closed or self._pc is None:
+            return
+        self._answer_applied = True
+        self.remote_identity = identity_value(sdp)
+        for candidate in strip_candidates(sdp)[1]:
+            self._stats.see_remote_candidate(candidate)
+        try:
+            await self._pc.set_remote_answer(strip_identity(sdp))
+        except ConnectionFailed as exc:
+            self.close(exc.error)
+            return
+        self._deadline = None
+
+    async def add_candidate(self, candidate: str) -> None:
+        if self._closed:
+            return
+        self._stats.see_remote_candidate(candidate)
+        if self._pc is None:
+            self._deferred.append(candidate)
+            return
+        await self._pc.add_remote_candidate(candidate)
+
+    def _send_description(self, message: type[ConnectRequest | ConnectResponse], sdp: str) -> bool:
+        route = self._channels.route(self.remote_id, prefers_lan=self.prefers_lan)
+        if route is None:
+            self.close(SessionError.NO_SIGNALING_CHANNEL)
+            return False
+        stripped, candidates = strip_candidates(sdp)
         for candidate in candidates:
-            self._send_signal(CandidateAdd(self.connection_id, candidate).serialize())
+            self._stats.see_local_candidate(candidate)
+        if not (self.trickle and route is Route.LAN):
+            self._signal(route, message(self.connection_id, sdp).serialize())
+            return True
+        self._signal(route, message(self.connection_id, stripped).serialize())
+        for candidate in candidates:
+            self._signal(route, CandidateAdd(self.connection_id, candidate).serialize())
+        return True
 
-    def _handle_connect_error(self, message: ConnectError) -> None:
-        # SPEC.md s5.5: a SignalingUnicastMessageDeliveryFailed (19) MUST NOT close an incoming
-        # (listener) session; only outgoing (dialer) sessions act on it. All other errors close.
-        if (
-            not self.is_dialer
-            and message.error == SessionError.SIGNALING_UNICAST_MESSAGE_DELIVERY_FAILED
-        ):
+    def _signal(self, route: Route, message: str) -> None:
+        if route is Route.LAN:
+            self._channels.lan_send(self.remote_id, message)
             return
-        self.close(message.error)
+        task = self._loop.create_task(self._send_http(message))
+        self._tasks.add(task)
+        task.add_done_callback(self._tasks.discard)
 
-    # -- transport callbacks -----------------------------------------------------------
-
-    def _handle_channels_open(self) -> None:
-        if self.state in (SessionState.CONNECTED, SessionState.CLOSED):
+    async def _send_http(self, message: str) -> None:
+        error = await self._channels.send(Route.HTTP, self.remote_id, message)
+        if error == SessionError.NONE or self._closed:
             return
-        self.state = SessionState.CONNECTED
-        self._cancel_timeout()
+        if error == SessionError.SIGNALING_UNICAST_MESSAGE_DELIVERY_FAILED and not self.is_dialer:
+            return
+        self.close(error)
+
+    def _handle_ice_connected(self) -> None:
+        if self._opened or self._closed:
+            return
+        self._opened = True
         if self._on_open is not None:
             self._on_open(self)
 
-    def _handle_connection_state(self, state: str) -> None:
-        if self.state == SessionState.CLOSED:
-            return
-        if state == "failed":
-            self.close(
-                SessionError.DATA_CHANNEL_CLOSED
-                if self.state == SessionState.CONNECTED
-                else SessionError.ICE
-            )
-        elif state == "closed" and self.state == SessionState.CONNECTED:
-            self.close(SessionError.DATA_CHANNEL_CLOSED)
+    def _handle_ice_failed(self) -> None:
+        self.close(SessionError.ICE)
 
     def _handle_packet(self, data: bytes) -> None:
+        self._stats.bytes_received += len(data)
+        self._stats.packets_received += 1
         if self._on_packet is not None:
             self._on_packet(self, data)
 
-    # -- application I/O ----------------------------------------------------------------
+    @property
+    def ice_state(self) -> str:
+        return self._pc.ice_connection_state if self._pc is not None else "new"
 
-    def send(self, data: bytes, send_type: SendType) -> bool:
-        """Send an application packet; only valid once CONNECTED (SPEC.md s6.3)."""
-        if self.state != SessionState.CONNECTED:
+    @property
+    def state(self) -> SessionState:
+        ice_state = self.ice_state
+        if ice_state in _ERRORED_ICE_STATES:
+            return SessionState.ERRORED
+        if ice_state in _ACTIVE_ICE_STATES:
+            return SessionState.ACTIVE
+        return SessionState.CONNECTING
+
+    def send(self, data: bytes, send_type: SendType = SendType.RELIABLE) -> bool:
+        if self._pc is None:
+            self._outbox.append((data, send_type))
+        elif not self._pc.send(data, send_type):
             return False
-        return self._pc.send(data, send_type)
+        self._stats.bytes_sent += len(data)
+        self._stats.packets_sent += 1
+        return True
 
     def read(self, max_size: int | None = None) -> bytes | None:
-        return self._pc.read(max_size)
+        if self._pc is None:
+            return None
+        data = self._pc.read(max_size)
+        if data is not None:
+            self._stats.bytes_received += len(data)
+            self._stats.packets_received += 1
+        return data
 
     def peek(self) -> int | None:
-        return self._pc.peek()
+        return self._pc.peek() if self._pc is not None else None
 
-    # -- timeouts & close --------------------------------------------------------------
+    def status(self) -> SessionStatus:
+        state, ice_state = self.state, self.ice_state
+        snapshot = self._stats.snapshot
+        now = self._loop.time()
+        if self._stats.taken_at is None or now - self._stats.taken_at > _SNAPSHOT_MAX_AGE:
+            self._take_snapshot(now)
+        if snapshot is None:
+            return SessionStatus(state=state, ice_state=ice_state)
+        return replace(snapshot, state=state, ice_state=ice_state)
 
-    def _arm_timeout(self, error: SessionError) -> None:
-        self._cancel_timeout()
-        loop = asyncio.get_running_loop()
-        self._timeout_handle = loop.call_later(self._negotiation_timeout, self.close, error)
+    def _take_snapshot(self, now: float) -> None:
+        pair = self._pc.candidate_pair() if self._pc is not None else None
+        self._stats.take(now, self.state, self.ice_state, pair)
 
-    def _cancel_timeout(self) -> None:
-        if self._timeout_handle is not None:
-            self._timeout_handle.cancel()
-            self._timeout_handle = None
-
-    def close(self, error: SessionError = SessionError.NONE, notify_remote: bool = False) -> None:
-        """Tear down the session and notify the application (SPEC.md s9.5)."""
-        if self.state == SessionState.CLOSED:
+    def sweep(self, now: float) -> None:
+        if self._closed:
             return
-        self.state = SessionState.CLOSED
-        self._cancel_timeout()
-        if notify_remote:
-            self._send_signal(ConnectError(self.connection_id, error).serialize())
-        self._close_task = asyncio.create_task(self._pc.close())
-        if self._on_close is not None:
-            self._on_close(self, error)
+        if self._pc is not None and self._pc.ice_connection_state in _ERRORED_ICE_STATES:
+            self.close(SessionError.ICE)
+        elif self.is_dialer and self._deadline is not None and now >= self._deadline:
+            self.close(SessionError.NEGOTIATION_TIMEOUT_WAITING_FOR_RESPONSE)
 
-    async def aclose(self, error: SessionError = SessionError.NONE) -> None:
-        """Close and await transport teardown (for tests / graceful shutdown)."""
-        if self.state != SessionState.CLOSED:
-            self.close(error)
-        if self._close_task is not None:
-            # Shielded: cancelling a waiter must not leak into aiortc's own close future.
-            await asyncio.shield(self._close_task)
+    def close(self, error: SessionError = SessionError.NONE) -> bool:
+        if self._closed:
+            return False
+        self._closed = True
+        self._deadline = None
+        self._take_snapshot(self._loop.time())
+        for task in self._tasks:
+            task.cancel()
+        if self._pc is not None:
+            self.close_task = self._loop.create_task(self._pc.close())
+        if self._on_close is not None:
+            self._on_close(self, SessionError(error), self._stats.summary())
+        return True
+
+    async def wait_closed(self) -> None:
+        if self.close_task is not None:
+            await asyncio.shield(self.close_task)
