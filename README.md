@@ -53,8 +53,11 @@ A `NetworkID` or a host from `discover` signals over the LAN.
 import asyncio, nethernet
 
 async def handle(connection):
-    async for packet in connection:
-        await connection.send(packet)
+    try:
+        async for packet in connection:
+            await connection.send(packet)
+    except nethernet.ConnectionClosed:
+        pass
 
 async def main():
     async with nethernet.serve(handle, name="Echo") as server:
@@ -129,7 +132,7 @@ Failures raise exceptions rather than returning sentinels. All inherit from `Net
 | Exception | Raised when |
 | --- | --- |
 | `ConnectionFailed` | a dial never reached the connected state (`.error` carries the cause) |
-| `ConnectionClosed` | `send` / `recv` on a closed connection; `.error` is `NONE` for a clean close |
+| `ConnectionClosed` | `send` / `recv` on a closed connection; `.error` is `NONE` when this end closed; a peer's close arrives as `DATA_CHANNEL_CLOSED` |
 | `InvalidIdentity` | an `a=identity` assertion is missing, malformed, or fails verification |
 
 `.error` is a `SessionError`, the same code Bedrock reports: negotiation timeouts, ICE

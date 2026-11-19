@@ -264,19 +264,22 @@ async def test_set_advertisement_changes_what_discovery_reports_and_rejects_unkn
     assert hosts[0].max_players == 3
 
 
-async def test_host_sees_the_client_close_within_seconds():
+async def test_host_sees_the_client_close_as_a_data_channel_close():
     closed = asyncio.Event()
     seen = []
 
     async def watch(conn):
+        await conn.send(await conn.recv())
         seen.append(await conn.wait_closed())
         closed.set()
 
     async with local_server(watch) as server:
-        async with connect(f"{LOOPBACK}:{server.bound_port}", timeout=20):
-            pass
+        async with connect(f"{LOOPBACK}:{server.bound_port}", timeout=20) as conn:
+            await conn.send(b"hello")
+            assert await conn.recv() == b"hello"
+        assert await conn.wait_closed() is SessionError.NONE
         await asyncio.wait_for(closed.wait(), 5)
-    assert seen == [SessionError.NONE]
+    assert seen == [SessionError.DATA_CHANNEL_CLOSED]
 
 
 async def test_serve_does_not_broadcast_unless_asked():
@@ -313,3 +316,25 @@ async def test_connect_times_out_when_the_lan_host_is_not_found():
             broadcast_port=9,
             timeout=0.5,
         )
+
+
+class GarbageSigner:
+    def sign(self, sdp):
+        return sdp.replace("m=application", "a=identity:garbage\r\nm=application", 1)
+
+
+async def test_garbage_identity_is_accepted_over_lan_and_refused_over_http():
+    async with local_server(echo_once) as server:
+        host = DiscoveredHost(server.local_id, b"", (LOOPBACK, server.lan_port))
+        async with connect(
+            host, bind_host=LOOPBACK, port=0, identity_signer=GarbageSigner(), timeout=20
+        ) as conn:
+            await conn.send(b"ping")
+            assert await conn.recv() == b"ping"
+        with pytest.raises(ConnectionFailed) as exc:
+            await connect(
+                f"http://{LOOPBACK}:{server.bound_port}",
+                identity_signer=GarbageSigner(),
+                timeout=20,
+            )
+    assert exc.value.error is SessionError.IDENTITY_NOT_ALLOWED

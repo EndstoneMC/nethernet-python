@@ -33,7 +33,7 @@ The facade is `api.py`, `transport_api.py` and `__init__.py`, a thin asyncio lay
 - `connect` resolves once the session is connected and raises `ConnectionFailed(error)` otherwise. A `timeout` that expires and a LAN host that is not found raise `TimeoutError`; error 14 stays with the negotiation timeout (`protocol/session.md`).
 - `send(data, reliability=SendType.RELIABLE)` raises `ConnectionClosed` unless connected. The framing rules (`protocol/framing.md`) apply unchanged.
 - `recv()` returns the next whole packet in FIFO order. After a close it hands out the buffered packets first, then raises `ConnectionClosed(error)`.
-- `async for packet in connection` stops on a clean close and raises on an error close.
+- `async for packet in connection` stops when this end closes and raises on an error close. A peer's close reaches the other end as `ConnectionClosed(DATA_CHANNEL_CLOSED)`, and a peer that vanishes is noticed only later (`protocol/transport.md`).
 - `close(error=SessionError.NONE)` and `wait_closed() -> SessionError`. `Connection` is an async context manager that closes on exit.
 
 ## Server and discovery
@@ -49,7 +49,7 @@ The facade is `api.py`, `transport_api.py` and `__init__.py`, a thin asyncio lay
 
 ## Errors and identity
 
-- Every public exception derives from `NetherNetError`: `ConnectionFailed`, `ConnectionClosed` (`.error` is `NONE` on a clean close), and `InvalidIdentity`.
+- Every public exception derives from `NetherNetError`: `ConnectionFailed`, `ConnectionClosed` (`.error` is `NONE` when this end closed), and `InvalidIdentity`.
 - Exception names carry no `Error` suffix, as in `websockets`.
 - Where BDS fails silently at startup, as on a bind or listen error, the library raises instead: the error propagates out of `serve()` and its startup, as with `asyncio.start_server`. What peers see on the wire still matches BDS.
 - The library accepts unknown query parameters for forward compatibility.

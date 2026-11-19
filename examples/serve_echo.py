@@ -6,8 +6,11 @@ import nethernet
 
 async def handle(connection: nethernet.Connection) -> None:
     print(f"connected: {connection.remote_id}")
-    async for packet in connection:
-        await connection.send(packet)
+    try:
+        async for packet in connection:
+            await connection.send(packet)
+    except nethernet.ConnectionClosed:
+        pass
     print(f"disconnected: {connection.remote_id}")
 
 

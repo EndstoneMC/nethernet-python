@@ -165,7 +165,7 @@ class Connection:
     """One connection to a peer, the same class on both ends.
 
     Use it as an async context manager to close it on exit, and iterate it to receive packets
-    until a clean close.
+    until this end closes. A peer's close raises ``ConnectionClosed`` with ``DATA_CHANNEL_CLOSED``.
 
     Attributes:
         local_id: This end's network id.
@@ -247,7 +247,7 @@ class Connection:
             await self._owner.aclose()
 
     async def wait_closed(self) -> SessionError:
-        """Wait for the close and return its error, ``NONE`` for a clean close."""
+        """Wait for the close and return its error, ``NONE`` when this end closed."""
         await self._closed.wait()
         return self._error or SessionError.NONE
 
