@@ -41,10 +41,14 @@ paths:
 - The channel's own send queue waits, never the caller. A fragment that would push the channel's buffered amount past 16 MiB, libwebrtc's `MaxSendQueueSize()`, stays queued, with every later fragment, until the buffered amount drops. A full queue drops nothing (1.26.60).
 - A fragment over 16 MiB would block the queue for good, which the fragment size cap (`framing.md`) rules out (1.26.60).
 - A channel close ends the session with a reason from the channel's error status, whoever closed it (1.26.60).
-- No error, as after a stream reset from either side or BDS's own close of a malformed message, gives `SessionError.NONE` (0) (1.26.60).
-- An error, as on an SCTP ABORT or a transport failure, gives `SessionError.DATA_CHANNEL_CLOSED` (32) (1.26.60).
+- No error, as when the peer resets the channel's stream or BDS closes the channel itself after a malformed message, gives `SessionError.NONE` (0) (1.26.60).
+- An error, as on an SCTP ABORT from the peer or a transport failure, gives `SessionError.DATA_CHANNEL_CLOSED` (32) (1.26.60).
+- A session reports one close reason, the first. A later channel close or ABORT on the same session reports nothing (1.26.60).
+- When the application closes a session, as on a kick, the closing side reports `SessionError.NONE` (0) at once, then closes the peer connection. That close sends the ABORT and close_notify below and reports nothing more (1.26.60). A server stop sends that ABORT on every session within 0.16 s (1.26.60).
+- After a malformed message BDS closes only the channel the message came on: a 0- or 1-byte message or a broken fragment countdown on the reliable channel, or a 0- or 1-byte message on the unreliable channel (`framing.md`). It starts a stream reset by itself only in these cases (1.26.60).
+- For the reliable channel BDS sends a stream reset request for that channel's stream only, answers our reset, then sends ABORT and close_notify, all within about 1 ms, and reports the player gone 14 ms after the message (1.26.60).
 - BDS closes a session, whether for a game-layer disconnect or a server stop, by sending an SCTP ABORT and then a DTLS close_notify in a separate datagram. It sends no SHUTDOWN, no stream reset and no signaling message first (1.26.60).
-- BDS sends a stream reset only as the answer to ours: it answers with a success response and resets its own outgoing streams for each reset one, then sends ABORT and close_notify within a millisecond (1.26.60).
+- Otherwise BDS sends a stream reset only as the answer to ours: it answers with a success response and resets its own outgoing streams for each reset one, then sends ABORT and close_notify within a millisecond (1.26.60).
 - BDS treats a stream reset from the peer and an ABORT from the peer the same way, as a full close, and reports the player gone about 15 ms later. A peer that vanishes with no close is reported gone about 17 s later (1.26.60).
 
 ## Candidates

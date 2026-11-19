@@ -25,7 +25,7 @@ MAX_MESSAGE_SIZE = 262144
 DEFAULT_MAX_MESSAGE_SIZE = 65536
 MAX_ICE_SERVERS = 16
 MAX_SEND_QUEUE_SIZE = 16 * 1024 * 1024
-CLOSE_TIMEOUT = 3.0
+RESET_TIMEOUT = 1.0
 
 _MAX_MESSAGE_SIZE_LINE = re.compile(r"^a=max-message-size:(\d+)\s*$", re.MULTILINE)
 
@@ -150,9 +150,9 @@ class PeerConnection:
         self._unreliable = _Outbound()
         self._packets = PacketQueue(self._reliable.send, self._unreliable.send)
         self._channels_open_fired = False
-        self._channels_ready = asyncio.Event()
         self._ice_connected = False
         self._close_reported = False
+        self._close_task: asyncio.Future[None] | None = None
         self._closed = False
 
         self._remote_sdp: str | None = None
@@ -289,7 +289,7 @@ class PeerConnection:
             self._on_ice_connected()
 
     def _report_close(self, error: SessionError) -> None:
-        if self._closed or self._close_reported:
+        if self._close_reported:
             return
         self._close_reported = True
         if self._on_close is not None:
@@ -338,7 +338,6 @@ class PeerConnection:
         ):
             return
         self._channels_open_fired = True
-        self._channels_ready.set()
         if not self._closed and self._on_channels_open is not None:
             self._on_channels_open()
 
@@ -347,7 +346,7 @@ class PeerConnection:
         return outbound.channel is not None and outbound.channel.readyState == "open"
 
     def _handle_channel_message(self, outbound: _Outbound, message: bytes | str) -> None:
-        if outbound.closing or self._closed:
+        if outbound.closing or self._closed or self._close_task is not None:
             return
         data = bytes(message) if isinstance(message, (bytes, bytearray)) else message.encode()
         if outbound is self._reliable:
@@ -355,15 +354,35 @@ class PeerConnection:
         else:
             accepted = self._packets.on_unreliable_message(data)
         if not accepted:
-            self._close_channel(outbound)
+            if self._close_task is not None:
+                return
+            self._report_close(SessionError.NONE)
+            reset = self._reset_reliable()
+            self._close_task = asyncio.ensure_future(self._close_after(reset))
             return
         self._deliver()
 
-    def _close_channel(self, outbound: _Outbound) -> None:
+    def _reset_reliable(self) -> asyncio.Future[None] | None:
+        outbound = self._reliable
         outbound.closing = True
         outbound.pending.clear()
-        if outbound.channel is not None:
-            outbound.channel.close()
+        channel = outbound.channel
+        if channel is None or channel.readyState in ("closing", "closed"):
+            return None
+        done = asyncio.get_running_loop().create_future()
+        channel.on("close", lambda: done.done() or done.set_result(None))
+        channel.close()
+        return done
+
+    async def _close_after(self, reset: asyncio.Future[None] | None) -> None:
+        try:
+            if reset is not None:
+                try:
+                    await asyncio.wait_for(reset, RESET_TIMEOUT)
+                except TimeoutError:
+                    pass
+        finally:
+            await self.close()
 
     def _handle_channel_close(self, outbound: _Outbound) -> None:
         outbound.pending.clear()
@@ -415,43 +434,8 @@ class PeerConnection:
         return self._packets.max_packet_size
 
     async def close(self) -> None:
-        already_closed = self._closed
         self._closed = True
         try:
-            if not already_closed:
-                await self._await_channels()
-                await self._close_channels()
+            self._report_close(SessionError.NONE)
         finally:
-            await self._pc.close()
-
-    async def _await_channels(self) -> None:
-        if self._channels_ready.is_set() or self._pc.iceConnectionState not in (
-            "checking",
-            "connected",
-            "completed",
-        ):
-            return
-        try:
-            await asyncio.wait_for(self._channels_ready.wait(), CLOSE_TIMEOUT)
-        except TimeoutError:
-            pass
-
-    async def _close_channels(self) -> None:
-        loop = asyncio.get_running_loop()
-        waits: list[asyncio.Future[None]] = []
-        for outbound in (self._reliable, self._unreliable):
-            channel = outbound.channel
-            if channel is None or channel.readyState == "closed":
-                continue
-            done = loop.create_future()
-            channel.on("close", lambda done=done: done.done() or done.set_result(None))
-            waits.append(done)
-            outbound.closing = True
-            outbound.pending.clear()
-            if channel.readyState != "closing":
-                channel.close()
-        if waits:
-            try:
-                await asyncio.wait_for(asyncio.gather(*waits), CLOSE_TIMEOUT)
-            except TimeoutError:
-                pass
+            await asyncio.shield(self._pc.close())
