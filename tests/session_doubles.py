@@ -5,13 +5,19 @@ from unittest import mock
 from aioice import Candidate
 from aioice.ice import CandidatePair
 from aiortc import RTCPeerConnection, RTCSessionDescription
+from pyee.asyncio import AsyncIOEventEmitter
 
 from nethernet.errors import SessionError
 from nethernet.network_id import NetworkID
 from nethernet.session_manager import SessionManager
 from nethernet.signaling.messages import parse
 from nethernet.transport import peer_connection as peer_connection_module
-from nethernet.transport.peer_connection import PeerConnection, candidate_to_message
+from nethernet.transport.peer_connection import (
+    RELIABLE_LABEL,
+    UNRELIABLE_LABEL,
+    PeerConnection,
+    candidate_to_message,
+)
 
 LOCAL = NetworkID.p2p(1000)
 REMOTE = NetworkID.p2p(2000)
@@ -49,6 +55,30 @@ OFFER = sdp_with_candidates("offer")
 ANSWER = sdp_with_candidates("answer")
 
 
+class FakeDataChannel(AsyncIOEventEmitter):
+    def __init__(self, label, options):
+        super().__init__()
+        self.label = label
+        self.options = options
+        self.readyState = "connecting"
+        self.bufferedAmount = 0
+        self.bufferedAmountLowThreshold = 0
+        self.sent: list[bytes] = []
+
+    def open(self):
+        self.readyState = "open"
+        self.emit("open")
+
+    def send(self, data):
+        self.sent.append(data)
+
+    def close(self):
+        if self.readyState in ("closing", "closed"):
+            return
+        self.readyState = "closed"
+        self.emit("close")
+
+
 class FakeRTCPeerConnection(RTCPeerConnection):
     fail_on: dict[str, SessionError] = {}
 
@@ -62,6 +92,20 @@ class FakeRTCPeerConnection(RTCPeerConnection):
         self.applied: list[str] = []
         self.events: list[str] = []
         self.closed = False
+        self.channels: list[FakeDataChannel] = []
+        self.transport = SimpleNamespace(
+            state="connected",
+            transport=SimpleNamespace(_connection=SimpleNamespace(_nominated={})),
+        )
+
+    def createDataChannel(self, label, **options):
+        channel = FakeDataChannel(label, options)
+        self.channels.append(channel)
+        return channel
+
+    @property
+    def sctp(self):
+        return SimpleNamespace(state="connected", transport=self.transport)
 
     async def createOffer(self):
         if "offer" in self.fail_on:
@@ -127,6 +171,14 @@ class FakePeerConnection(PeerConnection):
     def drive_ice(self, state: str) -> None:
         self.rtc.ice_state = state
         self.rtc.emit("iceconnectionstatechange")
+        if state not in ("connected", "completed"):
+            return
+        if not self.rtc.channels:
+            for label in (RELIABLE_LABEL, UNRELIABLE_LABEL):
+                self.rtc.emit("datachannel", self.rtc.createDataChannel(label))
+        for channel in self.rtc.channels:
+            if channel.readyState == "connecting":
+                channel.open()
 
     def nominate(self, local: str, remote: str, state: CandidatePair.State) -> None:
         pair = SimpleNamespace(
