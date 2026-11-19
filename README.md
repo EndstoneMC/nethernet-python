@@ -3,9 +3,7 @@
 [![Python](https://img.shields.io/badge/python-3.11%2B-blue.svg)](https://www.python.org/downloads/)
 [![License](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 
-A cleanroom Python implementation of **NetherNet**, the WebRTC transport Minecraft Bedrock uses
-for peer-to-peer and LAN play. It implements both signaling paths — LAN discovery and the
-partner HTTP endpoint — over one asyncio connection model, with WebRTC provided by
+A Python implementation of the NetherNet transport, built on asyncio with WebRTC provided by
 [aiortc](https://github.com/aiortc/aiortc).
 
 ```python
@@ -13,61 +11,57 @@ import nethernet
 
 async for host in nethernet.discover(timeout=3):
     async with await nethernet.connect(host) as conn:
-        await conn.send(b"\x06\xc1...")    # a Bedrock packet batch
+        await conn.send(b"\x06\xc1...")
         print(await conn.recv())
     break
 ```
 
 ## Installation
 
-The project is not published to PyPI yet; the `nethernet` name there belongs to an unrelated
-project. Install from source:
-
 ```shell
-pip install "nethernet[http] @ git+https://github.com/EndstoneMC/nethernet-python"
+pip install nethernet-python
 ```
 
-Requires Python 3.11 or newer. The `http` extra pulls in aiohttp for HTTP signaling; the LAN
-path needs only the base install.
+or, with uv:
 
-## The two signaling paths
+```shell
+uv add nethernet-python
+```
 
-Signaling is how two peers exchange their WebRTC session descriptions. NetherNet has two
-channels for it, and they produce the same connection:
+The import name is `nethernet`. Requires Python 3.11 or newer.
 
-| Path | Entry points | Used for |
-| --- | --- | --- |
-| LAN | `serve` / `connect` / `discover` | encrypted UDP broadcast on the local network; how Bedrock finds LAN games |
-| HTTP | `serve_http` / `connect_http` | a client posts its offer to `/v1/join/{networkId}`; how Bedrock reaches a partner-hosted server |
+## Entry points
 
-Both hand back the same `Connection`, a message pipe with `send` / `recv`. NetherNet is
-symmetric peer-to-peer, so one class serves both ends of a connection.
+| Entry points | Purpose |
+| --- | --- |
+| `serve` / `connect` / `discover` | accept, dial and find NetherNet hosts |
+| `serve_http` / `connect_http` | accept and dial NetherNet hosts by address |
 
-The wire protocol is specified in [`SPEC.md`](SPEC.md), reverse-engineered from Bedrock
-Dedicated Server. The HTTP path additionally follows Mojang's
+Both hand back the same `Connection`, a message pipe with `send` / `recv`, and one class
+serves both ends of a connection. The address-based entry points follow Mojang's
 [NetherNet onboarding guide](https://github.com/Mojang/bedrock-protocol-docs/blob/main/NetherNetOnboardingGuide.md).
 
 ## Quick start
 
-### LAN server
+### Server
 
 ```python
 import asyncio, secrets, nethernet
 from nethernet import SendType, NetworkID
 
 async def handle(connection):
-    async for packet in connection:         # iterates until the peer disconnects
+    async for packet in connection:
         await connection.send(packet, SendType.RELIABLE)
 
 async def main():
     local_id = NetworkID.p2p(secrets.randbits(64))
     async with nethernet.serve(handle, local_id, advertisement=b"MCPE;...") as server:
-        await server.serve_forever()        # one task per connection
+        await server.serve_forever()
 
 asyncio.run(main())
 ```
 
-### LAN client
+### Client
 
 ```python
 async for host in nethernet.discover(timeout=3):
@@ -78,7 +72,7 @@ async for host in nethernet.discover(timeout=3):
     break
 ```
 
-### HTTP signaling
+### Serving and dialing by address
 
 `serve_http` exposes the endpoints a Bedrock client posts its offer to. Every answer must carry
 an operator identity assertion or the client refuses the connection:
@@ -86,7 +80,7 @@ an operator identity assertion or the client refuses the connection:
 ```python
 from nethernet import IdentitySigner, generate_operator_key
 
-key = generate_operator_key()               # long-lived; share one across a fleet
+key = generate_operator_key()
 async with nethernet.serve_http(
     handle, port=8080,
     identity_signer=IdentitySigner(key, domain="partner.example"),
@@ -107,8 +101,8 @@ wire each packet carries a one-byte fragment header, which the library adds and 
 Reliability is per-call:
 
 ```python
-await conn.send(data, SendType.RELIABLE)     # ordered, retransmitted
-await conn.send(data, SendType.UNRELIABLE)   # unordered, may be lost
+await conn.send(data, SendType.RELIABLE)
+await conn.send(data, SendType.UNRELIABLE)
 ```
 
 Reliable packets are fragmented as needed, up to about 64 MiB. Unreliable ones are never

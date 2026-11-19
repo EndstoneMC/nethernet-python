@@ -1,13 +1,12 @@
 # Examples
 
-Runnable examples for the `nethernet` package. Install it first (`uv sync --extra dev`, or
-`pip install -e ".[http]"` for the HTTP signaling pair), then run any script directly.
+Runnable examples for the `nethernet` package. Install it first (`uv sync --extra dev`), then run any script directly.
 
 | Script | What it shows |
 | --- | --- |
-| [echo_server.py](echo_server.py) / [echo_client.py](echo_client.py) | LAN discovery and signaling: a host advertises itself, a client finds it and echoes messages. |
-| [http_echo_server.py](http_echo_server.py) / [http_echo_client.py](http_echo_client.py) | The same over HTTP signaling, with operator identity assertions. |
-| [discover_hosts.py](discover_hosts.py) | List the NetherNet hosts advertising on the LAN. |
+| [echo_server.py](echo_server.py) / [echo_client.py](echo_client.py) | A host advertises itself, a client finds it and echoes messages. |
+| [http_echo_server.py](http_echo_server.py) / [http_echo_client.py](http_echo_client.py) | The same by address, with operator identity assertions. |
+| [discover_hosts.py](discover_hosts.py) | List the NetherNet hosts that are advertising. |
 
 Start a server in one terminal and the matching client in another. The LAN pair finds each
 other by UDP broadcast, which a machine does not deliver to its own processes, so on one
