@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import re
 import secrets
 import struct
 import time
@@ -134,7 +135,10 @@ class HostAdvertisement:
     @classmethod
     def parse(cls, data: bytes) -> HostAdvertisement | None:
         try:
-            reader = _Reader(bytes.fromhex(data.decode("ascii")))
+            text = data.decode("ascii")
+            if re.fullmatch(r"[0-9A-Fa-f]*", text) is None:
+                return None
+            reader = _Reader(bytes.fromhex(text))
             return cls(
                 data_version=reader.byte(),
                 name=reader.text(),
@@ -203,11 +207,11 @@ class _Reader:
 
     def varint(self) -> int:
         value = 0
-        for shift in range(0, 70, 7):
+        for shift in range(0, 35, 7):
             byte = self.byte()
             value |= (byte & 0x7F) << shift
             if not byte & 0x80:
-                return value
+                return value & 0xFFFFFFFF
         raise ValueError("varint too long")
 
     def zigzag(self) -> int:

@@ -196,3 +196,68 @@ def test_default_advertisement_is_the_stock_bds_record():
     assert len(record) == 134
     assert len(bytes.fromhex(record.decode())) == 67
     assert HostAdvertisement.parse(record) == advertisement
+
+
+def _record(**overrides):
+    return HostAdvertisement(nonce="1234567890abcdef", **overrides).serialize()
+
+
+def _players_offset():
+    return 1 + 1 + len("Dedicated Server") + 2 + 1 + len("1.26.60") + 1 + len("Bedrock level")
+
+
+def _with_players(varint):
+    record = bytes.fromhex(_record().decode())
+    offset = _players_offset()
+    return (record[:offset] + varint + record[offset + 1 :]).hex().encode()
+
+
+def test_advertisement_parse_accepts_uppercase_hex():
+    advertisement = HostAdvertisement(nonce="1234567890abcdef", name="Server")
+    assert HostAdvertisement.parse(advertisement.serialize().upper()) == advertisement
+
+
+def test_advertisement_parse_drops_odd_length_hex():
+    assert HostAdvertisement.parse(_record() + b"0") is None
+
+
+def test_advertisement_parse_ignores_bytes_after_the_last_field():
+    advertisement = HostAdvertisement(nonce="1234567890abcdef")
+    assert HostAdvertisement.parse(advertisement.serialize() + b"ffee00") == advertisement
+
+
+def test_advertisement_parse_reads_any_non_zero_flag_byte_as_true():
+    record = bytearray(bytes.fromhex(_record().decode()))
+    offset = _players_offset() + 3
+    record[offset : offset + 4] = bytes([2, 0, 255, 128])
+    parsed = HostAdvertisement.parse(bytes(record).hex().encode())
+    flags = (parsed.editor, parsed.hardcore, parsed.online_auth, parsed.self_signed_auth)
+    assert flags == (True, False, True, True)
+
+
+def test_advertisement_parse_accepts_a_zero_padded_varint():
+    assert HostAdvertisement.parse(_with_players(b"\x80\x00")).players == 0
+    assert HostAdvertisement.parse(_with_players(b"\x82\x80\x80\x80\x00")).players == 1
+
+
+def test_advertisement_parse_drops_bits_above_31_of_the_fifth_byte():
+    assert HostAdvertisement.parse(_with_players(b"\x82\x80\x80\x80\x10")).players == 1
+
+
+def test_advertisement_parse_rejects_a_varint_continuing_after_five_bytes():
+    assert HostAdvertisement.parse(_with_players(b"\x80\x80\x80\x80\x80\x00")) is None
+
+
+def test_advertisement_parse_decodes_zigzag_on_32_bits():
+    assert HostAdvertisement.parse(_with_players(b"\xff\xff\xff\xff\x0f")).players == -(2**31)
+    assert HostAdvertisement.parse(_with_players(b"\xfe\xff\xff\xff\x0f")).players == 2**31 - 1
+
+
+def test_advertisement_parse_drops_even_length_non_hex_text():
+    assert HostAdvertisement.parse(_record()[:-2] + b"zz") is None
+
+
+def test_advertisement_parse_drops_whitespace_between_byte_pairs():
+    record = _record()
+    assert HostAdvertisement.parse(record[:2] + b" " + record[2:]) is None
+    assert HostAdvertisement.parse(record[:2] + b"\n" + record[2:]) is None
