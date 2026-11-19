@@ -357,13 +357,12 @@ class PeerConnection:
             if self._close_task is not None:
                 return
             self._report_close(SessionError.NONE)
-            reset = self._reset_reliable()
+            reset = self._reset_channel(outbound)
             self._close_task = asyncio.ensure_future(self._close_after(reset))
             return
         self._deliver()
 
-    def _reset_reliable(self) -> asyncio.Future[None] | None:
-        outbound = self._reliable
+    def _reset_channel(self, outbound: _Outbound) -> asyncio.Future[None] | None:
         outbound.closing = True
         outbound.pending.clear()
         channel = outbound.channel

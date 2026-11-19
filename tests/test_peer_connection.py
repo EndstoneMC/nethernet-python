@@ -271,17 +271,32 @@ async def test_malformed_reliable_message_resets_the_reliable_stream_then_closes
     assert pc.peek() is None
 
 
-async def test_malformed_unreliable_message_resets_only_the_reliable_stream():
+async def test_one_byte_unreliable_message_resets_only_the_unreliable_stream():
     closes: list[SessionError] = []
     pc = PeerConnection(is_dialer=True, on_close=closes.append)
     reliable = open_channel(pc)
     unreliable = open_channel(pc, reliable=False)
-    unreliable.emit("message", b"")
-    assert reliable.readyState in ("closing", "closed")
-    assert unreliable.readyState == "open"
+    reliable.emit("message", b"AB")
+    unreliable.emit("message", b"")
+    assert unreliable.readyState in ("closing", "closed")
+    assert reliable.readyState == "open"
+    assert pc._packets._partial
     await pc._close_task
     assert closes == [SessionError.NONE]
-    assert pc._pc.connectionState == "closed"
+    assert pc.connection_state == "closed"
+
+
+async def test_multi_byte_unreliable_message_is_delivered_minus_its_first_byte():
+    packets: list[bytes] = []
+    pc = PeerConnection(is_dialer=True, on_packet=packets.append)
+    try:
+        unreliable = open_channel(pc, reliable=False)
+        for header in (0, 1, 200):
+            unreliable.emit("message", bytes([header]) + b"hi")
+        assert packets == [b"hi", b"hi", b"hi"]
+        assert unreliable.readyState == "open"
+    finally:
+        await pc.close()
 
 
 async def test_channel_close_after_the_sctp_transport_closed_reports_data_channel_closed_once():
