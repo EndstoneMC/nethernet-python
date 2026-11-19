@@ -1,3 +1,4 @@
+import math
 import uuid
 
 import pytest
@@ -193,13 +194,34 @@ def test_json_bool_reads_as_a_number():
 
 @pytest.mark.parametrize(
     ("value", "expected"),
-    [(1.5, 1), (1.0, 1), (5e9, 705032704), (-1.0, 4294967295), (-1.5, 4294967295)],
+    [
+        (1.5, 1),
+        (1.0, 1),
+        (5e9, 705032704),
+        (-1.0, 4294967295),
+        (-1.5, 4294967295),
+        (-0.5, 0),
+        (4294967296.0, 0),
+        (4294967297.9, 1),
+    ],
 )
 def test_json_real_truncates_and_keeps_its_low_32_bits(value, expected):
     assert NetworkID.from_json(value) == NetworkID.p2p(expected)
 
 
-@pytest.mark.parametrize("value", [2**64, -(2**63) - 1, 1e30])
+@pytest.mark.parametrize(
+    "value",
+    [
+        2**64,
+        -(2**63) - 1,
+        1e30,
+        2.0**63,
+        -(2.0**63) - 2048.0,
+        float("nan"),
+        float("inf"),
+        -math.inf,
+    ],
+)
 def test_json_number_beyond_the_64_bit_range_reads_as_p2p_zero(value):
     assert NetworkID.from_json(value) == NetworkID.p2p(0)
 
