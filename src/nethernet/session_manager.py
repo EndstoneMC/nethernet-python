@@ -207,11 +207,11 @@ class SessionManager:
         return bool(result)
 
     def _reply(self, remote_id: NetworkID, message: str, via_lan: bool) -> None:
-        if via_lan:
-            if self._channels.lan_send is not None:
-                self._channels.lan_send(remote_id, message)
-        elif self._channels.http_send is not None:
-            self._spawn(self._channels.send(Route.HTTP, remote_id, message))
+        route = self._channels.route(remote_id, prefers_lan=via_lan)
+        if route is Route.LAN:
+            self._channels.lan_send(remote_id, message)
+        elif route is Route.HTTP:
+            self._spawn(self._channels.send(route, remote_id, message))
 
     def _relay_only(self, remote_id: NetworkID) -> bool:
         if self._connection_flags is None:

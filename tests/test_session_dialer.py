@@ -503,7 +503,10 @@ async def test_rates_divide_by_whole_seconds_and_keep_mean_and_maximum():
     session.status()
     assert session.status().send_rate == 50
     manager.close(REMOTE, CID)
-    summary = json.loads(recorder.closed[0][2])
+    text = recorder.closed[0][2]
+    assert '"avgBytesSentRate":175.0,' in text
+    assert '"avgPacketsSentRate":0.50,' in text
+    summary = json.loads(text)
     assert summary["active"] == "L1-R1"
     assert summary["pairs"] == {
         "L1-R1": {

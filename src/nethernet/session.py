@@ -10,7 +10,7 @@ from enum import Enum
 
 from nethernet.constants import DEFAULT_NEGOTIATION_TIMEOUT
 from nethernet.errors import ConnectionFailed, SendType, SessionError
-from nethernet.identity import strip_identity
+from nethernet.identity import json_number, strip_identity
 from nethernet.network_id import NetworkID
 from nethernet.signaling.messages import CandidateAdd, ConnectRequest, ConnectResponse
 from nethernet.transport.peer_connection import PeerConnection, strip_candidates
@@ -57,17 +57,14 @@ class SignalingChannels:
     is_lan_peer: Callable[[NetworkID], bool] | None = None
     lan_signaling: bool = True
 
-    def lan_usable(self, remote_id: NetworkID) -> bool:
-        if not self.lan_signaling or self.lan_send is None:
-            return False
-        return self.is_lan_peer is None or self.is_lan_peer(remote_id)
-
     def route(self, remote_id: NetworkID, *, prefers_lan: bool) -> Route | None:
-        if self.lan_usable(remote_id) and (self.http_send is None or prefers_lan):
-            return Route.LAN
-        if self.http_send is not None:
-            return Route.HTTP
-        return None
+        other = self.http_send is not None
+        if not self.lan_signaling or self.lan_send is None:
+            return Route.HTTP if other else None
+        on_lan = self.is_lan_peer is None or self.is_lan_peer(remote_id)
+        if other:
+            return Route.LAN if prefers_lan and on_lan else Route.HTTP
+        return Route.LAN if on_lan else None
 
     async def send(self, route: Route, remote_id: NetworkID, message: str) -> SessionError | None:
         if route is Route.LAN:
@@ -116,6 +113,16 @@ def _milliseconds(seconds: float | None) -> int | None:
 
 def _timestamp(moment: datetime) -> str:
     return moment.strftime("%Y-%m-%dT%H:%M:%S.") + f"{moment.microsecond // 1000:03d}Z"
+
+
+def _summary_json(value: object) -> str:
+    if isinstance(value, dict):
+        return "{" + ",".join(f"{json.dumps(k)}:{_summary_json(v)}" for k, v in value.items()) + "}"
+    if isinstance(value, list):
+        return "[" + ",".join(_summary_json(item) for item in value) + "]"
+    if isinstance(value, float):
+        return json_number(value)
+    return json.dumps(value)
 
 
 def _now() -> datetime:
@@ -271,7 +278,7 @@ class Statistics:
                 }
         if self._pairs:
             out["pairs"] = {pair_id: pair.summary() for pair_id, pair in self._pairs.items()}
-        return json.dumps(out, separators=(",", ":"))
+        return _summary_json(out)
 
 
 class Session:

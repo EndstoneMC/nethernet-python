@@ -16,7 +16,7 @@ from session_doubles import (
 )
 
 from nethernet.errors import ConnectionFlags, SessionError
-from nethernet.session import SessionState
+from nethernet.session import Route, SessionState, SignalingChannels
 from nethernet.signaling.messages import (
     CandidateAdd,
     ConnectError,
@@ -432,4 +432,58 @@ async def test_first_offer_attaches_to_an_early_session_and_a_later_one_is_dropp
     assert early.peer_connection is pc
     assert pc.rtc.events.count("remote") == 1
     assert len(channels.lan) == answers
+    await manager.aclose()
+
+
+async def test_channel_choice_follows_the_endpoint_setting_then_lan_reachability_and_preference():
+    async def http(remote, message):
+        return None
+
+    cases = [
+        (False, True, True, True, Route.HTTP),
+        (False, False, True, True, None),
+        (True, True, True, True, Route.LAN),
+        (True, True, True, False, Route.HTTP),
+        (True, True, False, True, Route.HTTP),
+        (True, False, True, False, Route.LAN),
+        (True, False, False, True, None),
+    ]
+    for lan_signaling, other, on_lan, prefers_lan, expected in cases:
+        channels = SignalingChannels(
+            lan_send=lambda remote, message: None,
+            http_send=http if other else None,
+            is_lan_peer=lambda remote, on_lan=on_lan: on_lan,
+            lan_signaling=lan_signaling,
+        )
+        assert channels.route(REMOTE, prefers_lan=prefers_lan) is expected
+
+
+async def test_other_channel_setting_is_the_same_for_every_remote():
+    channels = Channels()
+    manager = make_manager(
+        channels, Recorder(), http=True, is_lan_peer=lambda remote: remote == REMOTE
+    )
+    await offer(manager, sender=REMOTE, via_lan=True)
+    await offer(manager, sender=OTHER, via_lan=True)
+    assert [remote for remote, _ in channels.lan] == [REMOTE]
+    assert [remote for remote, _ in channels.http] == [OTHER]
+    await manager.aclose()
+
+
+async def test_declined_lan_offer_with_lan_signaling_off_is_refused_over_the_other_channel():
+    channels = Channels()
+    manager = make_manager(
+        channels, Recorder(), http=True, lan_signaling=False, accept=lambda request: False
+    )
+    await offer(manager, via_lan=True)
+    assert channels.lan == []
+    assert channels.http_messages() == [ConnectError(CID, SessionError.IDENTITY_NOT_ALLOWED)]
+    await manager.aclose()
+
+
+async def test_declined_offer_with_no_usable_channel_gets_no_reply():
+    channels = Channels()
+    manager = make_manager(channels, Recorder(), lan_signaling=False, accept=lambda request: False)
+    await offer(manager, via_lan=True)
+    assert channels.lan == channels.http == []
     await manager.aclose()
