@@ -424,3 +424,30 @@ async def test_garbage_identity_is_accepted_over_lan_and_refused_over_http():
                 timeout=20,
             )
     assert exc.value.error is SessionError.IDENTITY_NOT_ALLOWED
+
+
+class UnsignedSigner:
+    def sign(self, sdp):
+        return sdp
+
+
+async def test_unsigned_http_answer_is_refused_even_without_a_callback():
+    async with local_server(idle, identity_signer=UnsignedSigner()) as server:
+        with pytest.raises(ConnectionFailed) as exc:
+            await connect(f"http://{LOOPBACK}:{server.bound_port}", timeout=20)
+    assert exc.value.error is SessionError.IDENTITY_NOT_ALLOWED
+
+
+async def test_signed_http_answer_is_accepted_without_a_callback():
+    async with local_server(echo_once) as server:
+        async with connect(f"http://{LOOPBACK}:{server.bound_port}", timeout=20) as conn:
+            await conn.send(b"ping")
+            assert await conn.recv() == b"ping"
+
+
+async def test_unsigned_answer_over_lan_is_accepted():
+    async with local_server(echo_once, identity_signer=UnsignedSigner()) as server:
+        host = DiscoveredHost(server.local_id, b"", (LOOPBACK, server.lan_port))
+        async with connect(host, bind_host=LOOPBACK, port=0, timeout=20) as conn:
+            await conn.send(b"ping")
+            assert await conn.recv() == b"ping"

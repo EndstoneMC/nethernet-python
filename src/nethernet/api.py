@@ -619,13 +619,14 @@ async def _connect(
     base_url = await resolve_base_url(target) if isinstance(target, str) else None
 
     async def accept(request: AcceptRequest) -> bool:
-        if request.is_offer or request.via_lan or on_server_identity is None:
+        if request.is_offer or request.via_lan:
             return True
         try:
             _, identity = verify_server_identity(request.sdp)
-            result = on_server_identity(identity)
-            if inspect.isawaitable(result):
-                await result
+            if on_server_identity is not None:
+                result = on_server_identity(identity)
+                if inspect.isawaitable(result):
+                    await result
         except Exception:
             return False
         return True
@@ -712,6 +713,7 @@ def connect(
         timeout: Seconds to wait for the connection to open, unbounded when None.
         identity_signer: Signs the offer over HTTP, a fresh self-signed player when None.
         on_server_identity: Called with the host's verified operator identity, raise to refuse.
+            An HTTP answer without a valid operator identity is refused whether or not it is set.
 
     Returns:
         An awaitable that resolves to the open ``Connection``, also an async context manager.
