@@ -1,0 +1,262 @@
+{
+  "area": "signaling messages",
+  "spec": "SPEC.md section 5",
+  "baseline": "Minecraft Bedrock 1.26.60",
+  "serialize": [
+    {
+      "identifier": "CONNECTREQUEST",
+      "connection_id": "4242",
+      "data": "v=0\r\na=foo bar baz\r\n",
+      "text": "CONNECTREQUEST 4242 v=0\r\na=foo bar baz\r\n"
+    },
+    {
+      "identifier": "CONNECTRESPONSE",
+      "connection_id": "123",
+      "data": "v=0\r\no=- 4611731400430051336 2 IN IP4 127.0.0.1\r\ns=-\r\nt=0 0\r\na=group:BUNDLE 0\r\n",
+      "text": "CONNECTRESPONSE 123 v=0\r\no=- 4611731400430051336 2 IN IP4 127.0.0.1\r\ns=-\r\nt=0 0\r\na=group:BUNDLE 0\r\n"
+    },
+    {
+      "identifier": "CANDIDATEADD",
+      "connection_id": "7",
+      "data": "candidate:1 1 udp 2130706431 10.0.0.5 54321 typ host generation 0",
+      "text": "CANDIDATEADD 7 candidate:1 1 udp 2130706431 10.0.0.5 54321 typ host generation 0"
+    },
+    {
+      "identifier": "CONNECTERROR",
+      "connection_id": "7",
+      "error": 5,
+      "text": "CONNECTERROR 7 5"
+    },
+    {
+      "identifier": "CONNECTERROR",
+      "connection_id": "7",
+      "error": 0,
+      "text": "CONNECTERROR 7 0"
+    },
+    {
+      "identifier": "CONNECTERROR",
+      "connection_id": "0",
+      "error": -1,
+      "text": "CONNECTERROR 0 -1"
+    },
+    {
+      "identifier": "CONNECTREQUEST",
+      "connection_id": "18446744073709551615",
+      "data": "x",
+      "text": "CONNECTREQUEST 18446744073709551615 x"
+    }
+  ],
+  "parse": [
+    {
+      "text": "CONNECTREQUEST 999 v=0\r\no=- 4611731400430051336 2 IN IP4 127.0.0.1\r\ns=-\r\nt=0 0\r\na=group:BUNDLE 0\r\n",
+      "result": {
+        "identifier": "CONNECTREQUEST",
+        "connection_id": "999",
+        "data": "v=0\r\no=- 4611731400430051336 2 IN IP4 127.0.0.1\r\ns=-\r\nt=0 0\r\na=group:BUNDLE 0\r\n"
+      }
+    },
+    {
+      "text": "CANDIDATEADD 5 candidate:1 1 udp 2130706431 10.0.0.5 54321 typ host generation 0",
+      "result": {
+        "identifier": "CANDIDATEADD",
+        "connection_id": "5",
+        "data": "candidate:1 1 udp 2130706431 10.0.0.5 54321 typ host generation 0"
+      }
+    },
+    {
+      "text": "CONNECTERROR 7 19",
+      "result": {
+        "identifier": "CONNECTERROR",
+        "connection_id": "7",
+        "data": "19",
+        "error": 19
+      }
+    },
+    {
+      "text": "CANDIDATEADD 1  a b\nc ",
+      "result": {
+        "identifier": "CANDIDATEADD",
+        "connection_id": "1",
+        "data": " a b\nc "
+      }
+    },
+    {
+      "text": "CONNECTREQUEST 5 ",
+      "result": {
+        "identifier": "CONNECTREQUEST",
+        "connection_id": "5",
+        "data": ""
+      }
+    },
+    {
+      "text": "CONNECTREQUEST 123abc sdp",
+      "result": {
+        "identifier": "CONNECTREQUEST",
+        "connection_id": "123",
+        "data": "sdp"
+      }
+    },
+    {
+      "text": "CONNECTREQUEST 18446744073709551615z x",
+      "result": {
+        "identifier": "CONNECTREQUEST",
+        "connection_id": "18446744073709551615",
+        "data": "x"
+      }
+    },
+    {
+      "text": "CONNECTREQUEST 0 x",
+      "result": {
+        "identifier": "CONNECTREQUEST",
+        "connection_id": "0",
+        "data": "x"
+      }
+    },
+    {
+      "text": "CONNECTREQUEST 007 x",
+      "result": {
+        "identifier": "CONNECTREQUEST",
+        "connection_id": "7",
+        "data": "x"
+      }
+    },
+    {
+      "text": "CONNECTERROR 7 0",
+      "result": {
+        "identifier": "CONNECTERROR",
+        "connection_id": "7",
+        "data": "0",
+        "error": 0
+      }
+    },
+    {
+      "text": "CONNECTERROR 7 -1",
+      "result": {
+        "identifier": "CONNECTERROR",
+        "connection_id": "7",
+        "data": "-1",
+        "error": -1
+      }
+    },
+    {
+      "text": "CONNECTERROR 7 2147483647",
+      "result": {
+        "identifier": "CONNECTERROR",
+        "connection_id": "7",
+        "data": "2147483647",
+        "error": 2147483647
+      }
+    },
+    {
+      "text": "CONNECTERROR 7 -2147483648",
+      "result": {
+        "identifier": "CONNECTERROR",
+        "connection_id": "7",
+        "data": "-2147483648",
+        "error": -2147483648
+      }
+    },
+    {
+      "text": "CONNECTERROR 7 99",
+      "result": {
+        "identifier": "CONNECTERROR",
+        "connection_id": "7",
+        "data": "99",
+        "error": 99
+      }
+    },
+    {
+      "text": "CONNECTERROR 7 5abc",
+      "result": {
+        "identifier": "CONNECTERROR",
+        "connection_id": "7",
+        "data": "5abc",
+        "error": 5
+      }
+    },
+    {
+      "text": "",
+      "result": null
+    },
+    {
+      "text": "CONNECTREQUEST",
+      "result": null
+    },
+    {
+      "text": "CONNECTREQUEST 123",
+      "result": null
+    },
+    {
+      "text": "CONNECTREQUEST ",
+      "result": null
+    },
+    {
+      "text": "GREETINGS 1 x",
+      "result": null
+    },
+    {
+      "text": "connectrequest 1 x",
+      "result": null
+    },
+    {
+      "text": "ConnectRequest 1 x",
+      "result": null
+    },
+    {
+      "text": " CONNECTREQUEST 1 x",
+      "result": null
+    },
+    {
+      "text": "CONNECTREQUEST  1 x",
+      "result": null
+    },
+    {
+      "text": "CONNECTREQUEST notanumber sdp",
+      "result": null
+    },
+    {
+      "text": "CONNECTREQUEST -1 sdp",
+      "result": null
+    },
+    {
+      "text": "CONNECTREQUEST +1 sdp",
+      "result": null
+    },
+    {
+      "text": "CONNECTREQUEST abc123 sdp",
+      "result": null
+    },
+    {
+      "text": "CONNECTREQUEST 18446744073709551616 sdp",
+      "result": null
+    },
+    {
+      "text": "CONNECTERROR 7 ",
+      "result": null
+    },
+    {
+      "text": "CONNECTERROR 7 -",
+      "result": null
+    },
+    {
+      "text": "CONNECTERROR 7 +5",
+      "result": null
+    },
+    {
+      "text": "CONNECTERROR 7  5",
+      "result": null
+    },
+    {
+      "text": "CONNECTERROR 7 notanumber",
+      "result": null
+    },
+    {
+      "text": "CONNECTERROR 7 2147483648",
+      "result": null
+    },
+    {
+      "text": "CONNECTERROR 7 -2147483649",
+      "result": null
+    }
+  ]
+}

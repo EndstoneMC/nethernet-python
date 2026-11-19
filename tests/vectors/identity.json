@@ -1,0 +1,334 @@
+{
+  "area": "identity assertions",
+  "spec": "SPEC.md section 9",
+  "baseline": "Minecraft Bedrock 1.26.60",
+  "canonical_json": [
+    {
+      "value": {
+        "a": "\"\\/\b\t\n\f\r\u0001\u001a\u001fé"
+      },
+      "canonical_hex": "7b2261223a225c225c5c2f5c625c745c6e5c665c725c75303030315c75303031415c75303031467fc3a9227d"
+    },
+    {
+      "value": "\"\\",
+      "canonical": "\"\\\"\\\\\""
+    },
+    {
+      "value": "\b\t\n\f\r",
+      "canonical": "\"\\b\\t\\n\\f\\r\""
+    },
+    {
+      "value": "\u0001\u001a\u001f",
+      "canonical": "\"\\u0001\\u001A\\u001F\""
+    },
+    {
+      "value": "/é中",
+      "canonical": "\"/é中\""
+    },
+    {
+      "value": {
+        "b": [
+          1,
+          true,
+          null
+        ],
+        "a": {
+          "z": false,
+          "y": "é"
+        }
+      },
+      "canonical": "{\"a\":{\"y\":\"é\",\"z\":false},\"b\":[1,true,null]}"
+    }
+  ],
+  "envelope": [
+    {
+      "domain": "self",
+      "token": "T",
+      "fingerprints": "F",
+      "json_hex": "7b22617373657274696f6e223a227b5c2266696e6765727072696e74735c223a5c22465c222c5c22746f6b656e5c223a5c22545c227d222c22696470223a7b22646f6d61696e223a2273656c66222c2270726f746f636f6c223a2264656661756c74227d7d",
+      "value": "eyJhc3NlcnRpb24iOiJ7XCJmaW5nZXJwcmludHNcIjpcIkZcIixcInRva2VuXCI6XCJUXCJ9IiwiaWRwIjp7ImRvbWFpbiI6InNlbGYiLCJwcm90b2NvbCI6ImRlZmF1bHQifX0="
+    }
+  ],
+  "insert_identity": [
+    {
+      "sdp": "v=0\ns=-\r\nm=application 9 UDP/DTLS/SCTP webrtc-datachannel\nm=audio 9 RTP 0",
+      "value": "QUJD",
+      "result_hex": "763d300d0a733d2d0d0a613d6964656e746974793a51554a440d0a6d3d6170706c69636174696f6e2039205544502f44544c532f53435450207765627274632d646174616368616e6e656c0d0a6d3d617564696f20392052545020300d0a"
+    },
+    {
+      "sdp": "v=0\ns=-\n",
+      "value": "QUJD",
+      "result": "v=0\r\ns=-\r\na=identity:QUJD\r\n"
+    }
+  ],
+  "fingerprint_payload": [
+    {
+      "sdp": "v=0\r\na=fingerprint:sha-256 4A:AD:B9:B1:3F:82:18:3B:54:02:12:DF:3E:5D:49:6B:19:E5:7C:AB\r\nm=application 9 UDP/DTLS/SCTP webrtc-datachannel\r\n",
+      "payload_hex": "7b2266696e6765727072696e74223a5b7b22616c676f726974686d223a227368612d323536222c22646967657374223a2234413a41443a42393a42313a33463a38323a31383a33423a35343a30323a31323a44463a33453a35443a34393a36423a31393a45353a37433a4142227d5d7d"
+    },
+    {
+      "sdp": "a=fingerprint:sha-256 BB\r\nA=FINGERPRINT:sha-256 AA \r\na=fingerprint:SHA-1 ZZ\r\na=fingerprint:sha-256 BB\r\na=fingerprint:sha-512\r\na=fingerprint: CC\r\n a=fingerprint:sha-1 DD\r\na=fingerprint:sha-1 a b\n",
+      "payload_hex": "7b2266696e6765727072696e74223a5b7b22616c676f726974686d223a225348412d31222c22646967657374223a225a5a227d2c7b22616c676f726974686d223a227368612d31222c22646967657374223a22612062227d2c7b22616c676f726974686d223a227368612d323536222c22646967657374223a22414120227d2c7b22616c676f726974686d223a227368612d323536222c22646967657374223a224242227d2c7b22616c676f726974686d223a227368612d323536222c22646967657374223a224242227d5d7d"
+    }
+  ],
+  "operator_token": [
+    {
+      "curve": "P-384",
+      "private_scalar": "1",
+      "signing_time": 1000.9,
+      "header_json_hex": "7b22616c67223a224553333834222c22783575223a224d485977454159484b6f5a497a6a3043415159464b3445454143494459674145716f664b4972364c4254654f7363636538794374644734644f324b4c703575595766644234494a554b6a685641764a647631557062447055586a6879646771334e6866655370596d4c4739646e70692f6b704c634b666a304862306f6d68523836646f7845375877754d414b594c484f485836426e5870444858795136673566227d0a",
+      "payload_json_hex": "7b2263706b223a7b22637276223a22502d333834222c226b7479223a224543222c2278223a22716f664b4972364c4254654f7363636538794374644734644f324b4c703575595766644234494a554b6a685641764a647631557062447055586a687964677133222c2279223a224e6866655370596d4c4739646e70695f6b704c634b666a304862306f6d68523836646f7845375877754d414b594c484f485836426e5870444858795136673566227d2c22657870223a313036302c22696174223a313030307d0a"
+    }
+  ],
+  "jwk_encode": [
+    {
+      "curve": "P-256",
+      "private_scalar": "1",
+      "jwk_json": "{\"crv\":\"P-256\",\"kty\":\"EC\",\"x\":\"axfR8uEsQkf4vOblY6RA8ncDfYEt6zOg9KE5RdiYwpY\",\"y\":\"T-NC4v4af5uO5-tKfA-eFivOM1drMV7Oy7ZAaDe_UfU\"}"
+    }
+  ],
+  "jwt_verify": [
+    {
+      "name": "RFC 7515 A.3",
+      "jwk": {
+        "kty": "EC",
+        "crv": "P-256",
+        "x": "f83OJ3D2xF1Bg8vub9tLe1gHMzV76e8Tus9uPHvRVEU",
+        "y": "x_FEzRu9m36HLN_tue659LNpXW6pCyStikYjKIWI5a0"
+      },
+      "token": "eyJhbGciOiJFUzI1NiJ9.eyJpc3MiOiJqb2UiLA0KICJleHAiOjEzMDA4MTkzODAsDQogImh0dHA6Ly9leGFtcGxlLmNvbS9pc19yb290Ijp0cnVlfQ.DtEhU3ljbEg8L38VWAfUAqOyKAM6-Xx-F4GawxaepmXFCgfTjDxw5djxLa8ISlSApmWQxfKTUJqPP3-Kg6NU1Q",
+      "valid": true,
+      "claims": {
+        "iss": "joe",
+        "exp": 1300819380,
+        "http://example.com/is_root": true
+      }
+    },
+    {
+      "name": "RFC 7515 A.3, signature changed",
+      "jwk": {
+        "kty": "EC",
+        "crv": "P-256",
+        "x": "f83OJ3D2xF1Bg8vub9tLe1gHMzV76e8Tus9uPHvRVEU",
+        "y": "x_FEzRu9m36HLN_tue659LNpXW6pCyStikYjKIWI5a0"
+      },
+      "token": "eyJhbGciOiJFUzI1NiJ9.eyJpc3MiOiJqb2UiLA0KICJleHAiOjEzMDA4MTkzODAsDQogImh0dHA6Ly9leGFtcGxlLmNvbS9pc19yb290Ijp0cnVlfQ.EtEhU3ljbEg8L38VWAfUAqOyKAM6-Xx-F4GawxaepmXFCgfTjDxw5djxLa8ISlSApmWQxfKTUJqPP3-Kg6NU1Q",
+      "valid": false
+    }
+  ],
+  "base64url_no_bytes": [
+    "",
+    "=",
+    "A",
+    "=AAAA",
+    "!AAAA"
+  ],
+  "envelope_rejects": [
+    "eyJpZHAiOnsiZG9tYWluIjoiZCIsInByb3RvY29sIjoicCJ9fQ==",
+    "eyJhc3NlcnRpb24iOjEsImlkcCI6eyJkb21haW4iOiJkIiwicHJvdG9jb2wiOiJwIn19",
+    "eyJhc3NlcnRpb24iOiJ4IiwiaWRwIjoiZCJ9",
+    "eyJhc3NlcnRpb24iOiJ4IiwiaWRwIjp7InByb3RvY29sIjoicCJ9fQ==",
+    "eyJhc3NlcnRpb24iOiJ4IiwiaWRwIjp7ImRvbWFpbiI6ImQiLCJwcm90b2NvbCI6MH19",
+    "WyJhc3NlcnRpb24iXQ==",
+    "bm90IGpzb24="
+  ],
+  "rsa_jwk": [
+    {
+      "name": "1024-bit modulus",
+      "jwk": {
+        "kty": "RSA",
+        "n": "odNim5w-zAnAxcWP3FOTwvy-cfkbzIX03W0wxKNQthGUpQVHAmwEMBWzC5elFAkNWq_JZwMpJ7EYBBJpXEhE25gOB8tNE_U_D1Y2bFGfAtWtf9wfZ0CQNsNDtW3a6WiArW1edm5ywZjnO7KPNAXgNrNCFIUEqA961kongkkLGkk",
+        "e": "AQAB"
+      },
+      "valid": true
+    },
+    {
+      "name": "e with leading zeros",
+      "jwk": {
+        "kty": "RSA",
+        "n": "odNim5w-zAnAxcWP3FOTwvy-cfkbzIX03W0wxKNQthGUpQVHAmwEMBWzC5elFAkNWq_JZwMpJ7EYBBJpXEhE25gOB8tNE_U_D1Y2bFGfAtWtf9wfZ0CQNsNDtW3a6WiArW1edm5ywZjnO7KPNAXgNrNCFIUEqA961kongkkLGkk",
+        "e": "AAEAAQ"
+      },
+      "valid": true
+    },
+    {
+      "name": "empty e",
+      "jwk": {
+        "kty": "RSA",
+        "n": "odNim5w-zAnAxcWP3FOTwvy-cfkbzIX03W0wxKNQthGUpQVHAmwEMBWzC5elFAkNWq_JZwMpJ7EYBBJpXEhE25gOB8tNE_U_D1Y2bFGfAtWtf9wfZ0CQNsNDtW3a6WiArW1edm5ywZjnO7KPNAXgNrNCFIUEqA961kongkkLGkk",
+        "e": ""
+      },
+      "valid": false
+    },
+    {
+      "name": "n of 129 bytes",
+      "jwk": {
+        "kty": "RSA",
+        "n": "AKHTYpucPswJwMXFj9xTk8L8vnH5G8yF9N1tMMSjULYRlKUFRwJsBDAVswuXpRQJDVqvyWcDKSexGAQSaVxIRNuYDgfLTRP1Pw9WNmxRnwLVrX_cH2dAkDbDQ7Vt2ulogK1tXnZucsGY5zuyjzQF4DazQhSFBKgPetZKJ4JJCxpJ",
+        "e": "AQAB"
+      },
+      "valid": false
+    },
+    {
+      "name": "shorter modulus padded to 128 bytes",
+      "jwk": {
+        "kty": "RSA",
+        "n": "AKHTYpucPswJwMXFj9xTk8L8vnH5G8yF9N1tMMSjULYRlKUFRwJsBDAVswuXpRQJDVqvyWcDKSexGAQSaVxIRNuYDgfLTRP1Pw9WNmxRnwLVrX_cH2dAkDbDQ7Vt2ulogK1tXnZucsGY5zuyjzQF4DazQhSFBKgPetZKJ4JJCxo",
+        "e": "AQAB"
+      },
+      "valid": true
+    },
+    {
+      "name": "shorter modulus in 127 bytes",
+      "jwk": {
+        "kty": "RSA",
+        "n": "odNim5w-zAnAxcWP3FOTwvy-cfkbzIX03W0wxKNQthGUpQVHAmwEMBWzC5elFAkNWq_JZwMpJ7EYBBJpXEhE25gOB8tNE_U_D1Y2bFGfAtWtf9wfZ0CQNsNDtW3a6WiArW1edm5ywZjnO7KPNAXgNrNCFIUEqA961kongkkLGg",
+        "e": "AQAB"
+      },
+      "valid": false
+    },
+    {
+      "name": "no n",
+      "jwk": {
+        "kty": "RSA",
+        "e": "AQAB"
+      },
+      "valid": false
+    }
+  ],
+  "ecdsa_signature": [
+    {
+      "name": "96 bytes",
+      "jwk": {
+        "crv": "P-384",
+        "kty": "EC",
+        "x": "CNmZBXuj0tlpJgBFxVuX8IkCWVmm9DTWUdIH0Z-5bp5P4Ohuvg5k-FuWqcdSld9h",
+        "y": "joDx-lsbPO23v-jf_W26dLJ12HW8bMQ-kE5QXyVqtCVf_UPpTTniLWFQHnAKlA6A"
+      },
+      "sdp": "v=0\r\no=- 123456789 2 IN IP4 127.0.0.1\r\ns=-\r\nt=0 0\r\na=fingerprint:sha-256 4A:AD:B9:B1:3F:82:18:3B:54:02:12:DF:3E:5D:49:6B:19:E5:7C:AB\r\nm=application 9 UDP/DTLS/SCTP webrtc-datachannel\r\na=sctp-port:5000\r\n",
+      "fingerprints": "eyJhbGciOiJFUzM4NCJ9..vpUQHo8hFOo6yDJtUmFLGsyVQWiGNAOhA40bkNlsjwmNF52dtgUoDEsgPfTcyBsYIT8-pUffSFU7yMjJJjIyRRI-HFnJ8m23cMAuzTw8IEu6ae2x4PLySVZQIPXrrfTY",
+      "valid": true
+    },
+    {
+      "name": "halves of 60 bytes",
+      "jwk": {
+        "crv": "P-384",
+        "kty": "EC",
+        "x": "CNmZBXuj0tlpJgBFxVuX8IkCWVmm9DTWUdIH0Z-5bp5P4Ohuvg5k-FuWqcdSld9h",
+        "y": "joDx-lsbPO23v-jf_W26dLJ12HW8bMQ-kE5QXyVqtCVf_UPpTTniLWFQHnAKlA6A"
+      },
+      "sdp": "v=0\r\no=- 123456789 2 IN IP4 127.0.0.1\r\ns=-\r\nt=0 0\r\na=fingerprint:sha-256 4A:AD:B9:B1:3F:82:18:3B:54:02:12:DF:3E:5D:49:6B:19:E5:7C:AB\r\nm=application 9 UDP/DTLS/SCTP webrtc-datachannel\r\na=sctp-port:5000\r\n",
+      "fingerprints": "eyJhbGciOiJFUzM4NCJ9..AAAAAAAAAAAAAAAAvpUQHo8hFOo6yDJtUmFLGsyVQWiGNAOhA40bkNlsjwmNF52dtgUoDEsgPfTcyBsYAAAAAAAAAAAAAAAAIT8-pUffSFU7yMjJJjIyRRI-HFnJ8m23cMAuzTw8IEu6ae2x4PLySVZQIPXrrfTY",
+      "valid": true
+    },
+    {
+      "name": "odd length, last byte dropped",
+      "jwk": {
+        "crv": "P-384",
+        "kty": "EC",
+        "x": "CNmZBXuj0tlpJgBFxVuX8IkCWVmm9DTWUdIH0Z-5bp5P4Ohuvg5k-FuWqcdSld9h",
+        "y": "joDx-lsbPO23v-jf_W26dLJ12HW8bMQ-kE5QXyVqtCVf_UPpTTniLWFQHnAKlA6A"
+      },
+      "sdp": "v=0\r\no=- 123456789 2 IN IP4 127.0.0.1\r\ns=-\r\nt=0 0\r\na=fingerprint:sha-256 4A:AD:B9:B1:3F:82:18:3B:54:02:12:DF:3E:5D:49:6B:19:E5:7C:AB\r\nm=application 9 UDP/DTLS/SCTP webrtc-datachannel\r\na=sctp-port:5000\r\n",
+      "fingerprints": "eyJhbGciOiJFUzM4NCJ9..vpUQHo8hFOo6yDJtUmFLGsyVQWiGNAOhA40bkNlsjwmNF52dtgUoDEsgPfTcyBsYIT8-pUffSFU7yMjJJjIyRRI-HFnJ8m23cMAuzTw8IEu6ae2x4PLySVZQIPXrrfTYBw",
+      "valid": true
+    },
+    {
+      "name": "split off centre",
+      "jwk": {
+        "crv": "P-384",
+        "kty": "EC",
+        "x": "CNmZBXuj0tlpJgBFxVuX8IkCWVmm9DTWUdIH0Z-5bp5P4Ohuvg5k-FuWqcdSld9h",
+        "y": "joDx-lsbPO23v-jf_W26dLJ12HW8bMQ-kE5QXyVqtCVf_UPpTTniLWFQHnAKlA6A"
+      },
+      "sdp": "v=0\r\no=- 123456789 2 IN IP4 127.0.0.1\r\ns=-\r\nt=0 0\r\na=fingerprint:sha-256 4A:AD:B9:B1:3F:82:18:3B:54:02:12:DF:3E:5D:49:6B:19:E5:7C:AB\r\nm=application 9 UDP/DTLS/SCTP webrtc-datachannel\r\na=sctp-port:5000\r\n",
+      "fingerprints": "eyJhbGciOiJFUzM4NCJ9..AL6VEB6PIRTqOsgybVJhSxrMlUFohjQDoQONG5DZbI8JjRednbYFKAxLID303MgbGCE_PqVH30hVO8jIySYyMkUSPhxZyfJtt3DALs08PCBLumntseDy8klWUCD166302AA",
+      "valid": false
+    },
+    {
+      "name": "halves swapped",
+      "jwk": {
+        "crv": "P-384",
+        "kty": "EC",
+        "x": "CNmZBXuj0tlpJgBFxVuX8IkCWVmm9DTWUdIH0Z-5bp5P4Ohuvg5k-FuWqcdSld9h",
+        "y": "joDx-lsbPO23v-jf_W26dLJ12HW8bMQ-kE5QXyVqtCVf_UPpTTniLWFQHnAKlA6A"
+      },
+      "sdp": "v=0\r\no=- 123456789 2 IN IP4 127.0.0.1\r\ns=-\r\nt=0 0\r\na=fingerprint:sha-256 4A:AD:B9:B1:3F:82:18:3B:54:02:12:DF:3E:5D:49:6B:19:E5:7C:AB\r\nm=application 9 UDP/DTLS/SCTP webrtc-datachannel\r\na=sctp-port:5000\r\n",
+      "fingerprints": "eyJhbGciOiJFUzM4NCJ9..IT8-pUffSFU7yMjJJjIyRRI-HFnJ8m23cMAuzTw8IEu6ae2x4PLySVZQIPXrrfTYvpUQHo8hFOo6yDJtUmFLGsyVQWiGNAOhA40bkNlsjwmNF52dtgUoDEsgPfTcyBsY",
+      "valid": false
+    },
+    {
+      "name": "one byte",
+      "jwk": {
+        "crv": "P-384",
+        "kty": "EC",
+        "x": "CNmZBXuj0tlpJgBFxVuX8IkCWVmm9DTWUdIH0Z-5bp5P4Ohuvg5k-FuWqcdSld9h",
+        "y": "joDx-lsbPO23v-jf_W26dLJ12HW8bMQ-kE5QXyVqtCVf_UPpTTniLWFQHnAKlA6A"
+      },
+      "sdp": "v=0\r\no=- 123456789 2 IN IP4 127.0.0.1\r\ns=-\r\nt=0 0\r\na=fingerprint:sha-256 4A:AD:B9:B1:3F:82:18:3B:54:02:12:DF:3E:5D:49:6B:19:E5:7C:AB\r\nm=application 9 UDP/DTLS/SCTP webrtc-datachannel\r\na=sctp-port:5000\r\n",
+      "fingerprints": "eyJhbGciOiJFUzM4NCJ9..AQ",
+      "valid": false
+    }
+  ],
+  "player_offer": [
+    {
+      "name": "valid, token signature not checked",
+      "sdp": "v=0\r\no=- 123456789 2 IN IP4 127.0.0.1\r\ns=-\r\nt=0 0\r\na=fingerprint:sha-256 4A:AD:B9:B1:3F:82:18:3B:54:02:12:DF:3E:5D:49:6B:19:E5:7C:AB\r\na=identity:eyJhc3NlcnRpb24iOiJ7XCJmaW5nZXJwcmludHNcIjpcImV5SmhiR2NpT2lKRlV6TTROQ0o5Li44Y21ydk1RajlKQjhZbFBHSXF1aTNHR2tXVnZXMElIakpLRHhjTGZRQXkwc043Sm1XU1FiUkp4cHNrRFEyZDdKVDdmT0pFMHp4RWdKcHc3dFpMMUFrRER3bF9YQWx6N2lSUnBRalY5M0RuV3lOVTFtaENSWXdVNUx6Y2sxTGw4M1wiLFwidG9rZW5cIjpcImV5SmhiR2NpT2lKRlV6TTROQ0o5LmV5SmpjR3NpT2lBaVRVaFpkMFZCV1VoTGIxcEplbW93UTBGUldVWkxORVZGUVVOSlJGbG5RVVZDTTNCQ01VZENkaXRvVW10bFZIZ3JXRGw0T1cxTmRXUlBVa0ZuVEdNd1IzWnhWSGxSVGs1WFltRmhNRU5NZFhWVlExcFpSRkZNV0RWalkwWkJUV2Q0ZVZwWU0zbG5jMDFSYjA0NVF6YzJWMEZ4YmpodFdWVm5kRUo1UmtWV2NXdzVNbWhOUkhSM1VraHhla05UY2pGeU5VeFlVMjFNV21aTFIwRkxUSGd6ZUNJc0lDSnBjM01pT2lBaVlYVjBhQzVsZUdGdGNHeGxJaXdnSW5oMWFXUWlPaUFpTVNKOS5jMmxuYm1GMGRYSmxcIn0iLCJpZHAiOnsiZG9tYWluIjoiYXV0aC5leGFtcGxlIiwicHJvdG9jb2wiOiJkZWZhdWx0In19\r\nm=application 9 UDP/DTLS/SCTP webrtc-datachannel\r\na=sctp-port:5000\r\n",
+      "valid": true
+    },
+    {
+      "name": "fingerprint changed after signing",
+      "sdp": "v=0\r\no=- 123456789 2 IN IP4 127.0.0.1\r\ns=-\r\nt=0 0\r\na=fingerprint:sha-256 FF:FF:B9:B1:3F:82:18:3B:54:02:12:DF:3E:5D:49:6B:19:E5:7C:AB\r\na=identity:eyJhc3NlcnRpb24iOiJ7XCJmaW5nZXJwcmludHNcIjpcImV5SmhiR2NpT2lKRlV6TTROQ0o5Li44Y21ydk1RajlKQjhZbFBHSXF1aTNHR2tXVnZXMElIakpLRHhjTGZRQXkwc043Sm1XU1FiUkp4cHNrRFEyZDdKVDdmT0pFMHp4RWdKcHc3dFpMMUFrRER3bF9YQWx6N2lSUnBRalY5M0RuV3lOVTFtaENSWXdVNUx6Y2sxTGw4M1wiLFwidG9rZW5cIjpcImV5SmhiR2NpT2lKRlV6TTROQ0o5LmV5SmpjR3NpT2lBaVRVaFpkMFZCV1VoTGIxcEplbW93UTBGUldVWkxORVZGUVVOSlJGbG5RVVZDTTNCQ01VZENkaXRvVW10bFZIZ3JXRGw0T1cxTmRXUlBVa0ZuVEdNd1IzWnhWSGxSVGs1WFltRmhNRU5NZFhWVlExcFpSRkZNV0RWalkwWkJUV2Q0ZVZwWU0zbG5jMDFSYjA0NVF6YzJWMEZ4YmpodFdWVm5kRUo1UmtWV2NXdzVNbWhOUkhSM1VraHhla05UY2pGeU5VeFlVMjFNV21aTFIwRkxUSGd6ZUNJc0lDSnBjM01pT2lBaVlYVjBhQzVsZUdGdGNHeGxJaXdnSW5oMWFXUWlPaUFpTVNKOS5jMmxuYm1GMGRYSmxcIn0iLCJpZHAiOnsiZG9tYWluIjoiYXV0aC5leGFtcGxlIiwicHJvdG9jb2wiOiJkZWZhdWx0In19\r\nm=application 9 UDP/DTLS/SCTP webrtc-datachannel\r\na=sctp-port:5000\r\n",
+      "valid": false
+    },
+    {
+      "name": "cpk cut short by an underscore",
+      "sdp": "v=0\r\no=- 123456789 2 IN IP4 127.0.0.1\r\ns=-\r\nt=0 0\r\na=fingerprint:sha-256 4A:AD:B9:B1:3F:82:18:3B:54:02:12:DF:3E:5D:49:6B:19:E5:7C:AB\r\na=identity:eyJhc3NlcnRpb24iOiJ7XCJmaW5nZXJwcmludHNcIjpcImV5SmhiR2NpT2lKRlV6TTROQ0o5Li44Y21ydk1RajlKQjhZbFBHSXF1aTNHR2tXVnZXMElIakpLRHhjTGZRQXkwc043Sm1XU1FiUkp4cHNrRFEyZDdKVDdmT0pFMHp4RWdKcHc3dFpMMUFrRER3bF9YQWx6N2lSUnBRalY5M0RuV3lOVTFtaENSWXdVNUx6Y2sxTGw4M1wiLFwidG9rZW5cIjpcImV5SmhiR2NpT2lKRlV6TTROQ0o5LmV5SmpjR3NpT2lBaVRVaFpkMFZCV1VoTGIxcEplbW93UTBGUldVWkxORVZGWDBGRFNVUlpaMEZGUWpOd1FqRkhRbllyYUZKclpWUjRLMWc1ZURsdFRYVmtUMUpCWjB4ak1FZDJjVlI1VVU1T1YySmhZVEJEVEhWMVZVTmFXVVJSVEZnMVkyTkdRVTFuZUhsYVdETjVaM05OVVc5T09VTTNObGRCY1c0NGJWbFZaM1JDZVVaRlZuRnNPVEpvVFVSMGQxSkljWHBEVTNJeGNqVk1XRk50VEZwbVMwZEJTMHg0TTNnaUxDQWlhWE56SWpvZ0ltRjFkR2d1WlhoaGJYQnNaU0lzSUNKNGRXbGtJam9nSWpFaWZRLmMybG5ibUYwZFhKbFwifSIsImlkcCI6eyJkb21haW4iOiJhdXRoLmV4YW1wbGUiLCJwcm90b2NvbCI6ImRlZmF1bHQifX0=\r\nm=application 9 UDP/DTLS/SCTP webrtc-datachannel\r\na=sctp-port:5000\r\n",
+      "valid": false
+    },
+    {
+      "name": "cpk as a JWK object",
+      "sdp": "v=0\r\no=- 123456789 2 IN IP4 127.0.0.1\r\ns=-\r\nt=0 0\r\na=fingerprint:sha-256 4A:AD:B9:B1:3F:82:18:3B:54:02:12:DF:3E:5D:49:6B:19:E5:7C:AB\r\na=identity:eyJhc3NlcnRpb24iOiJ7XCJmaW5nZXJwcmludHNcIjpcImV5SmhiR2NpT2lKRlV6TTROQ0o5Li44Y21ydk1RajlKQjhZbFBHSXF1aTNHR2tXVnZXMElIakpLRHhjTGZRQXkwc043Sm1XU1FiUkp4cHNrRFEyZDdKVDdmT0pFMHp4RWdKcHc3dFpMMUFrRER3bF9YQWx6N2lSUnBRalY5M0RuV3lOVTFtaENSWXdVNUx6Y2sxTGw4M1wiLFwidG9rZW5cIjpcImV5SmhiR2NpT2lKRlV6TTROQ0o5LmV5SmpjR3NpT2lCN0ltTnlkaUk2SUNKUUxUTTROQ0lzSUNKcmRIa2lPaUFpUlVNaUxDQWllQ0k2SUNKQ00zQkNNVWRDZGkxb1VtdGxWSGd0V0RsNE9XMU5kV1JQVWtGblRHTXdSM1p4VkhsUlRrNVhZbUZoTUVOTWRYVlZRMXBaUkZGTVdEVmpZMFpCVFdkNElpd2dJbmtpT2lBaWVWcFlNM2xuYzAxUmIwNDVRemMyVjBGeGJqaHRXVlZuZEVKNVJrVldjV3c1TW1oTlJIUjNVa2h4ZWtOVGNqRnlOVXhZVTIxTVdtWkxSMEZMVEhnemVDSjlMQ0FpYVhOeklqb2dJbUYxZEdndVpYaGhiWEJzWlNJc0lDSjRkV2xrSWpvZ0lqRWlmUS5jMmxuYm1GMGRYSmxcIn0iLCJpZHAiOnsiZG9tYWluIjoiYXV0aC5leGFtcGxlIiwicHJvdG9jb2wiOiJkZWZhdWx0In19\r\nm=application 9 UDP/DTLS/SCTP webrtc-datachannel\r\na=sctp-port:5000\r\n",
+      "valid": false
+    },
+    {
+      "name": "no a=identity line",
+      "sdp": "v=0\r\no=- 123456789 2 IN IP4 127.0.0.1\r\ns=-\r\nt=0 0\r\na=fingerprint:sha-256 4A:AD:B9:B1:3F:82:18:3B:54:02:12:DF:3E:5D:49:6B:19:E5:7C:AB\r\nm=application 9 UDP/DTLS/SCTP webrtc-datachannel\r\na=sctp-port:5000\r\n",
+      "valid": false
+    }
+  ],
+  "jwt_verify_mixed_alphabet": [
+    {
+      "name": "RFC 7515 A.3, JWK in the standard alphabet with padding",
+      "jwk": {
+        "kty": "EC",
+        "crv": "P-256",
+        "x": "f83OJ3D2xF1Bg8vub9tLe1gHMzV76e8Tus9uPHvRVEU=",
+        "y": "x/FEzRu9m36HLN/tue659LNpXW6pCyStikYjKIWI5a0="
+      },
+      "token": "eyJhbGciOiJFUzI1NiJ9.eyJpc3MiOiJqb2UiLA0KICJleHAiOjEzMDA4MTkzODAsDQogImh0dHA6Ly9leGFtcGxlLmNvbS9pc19yb290Ijp0cnVlfQ.DtEhU3ljbEg8L38VWAfUAqOyKAM6-Xx-F4GawxaepmXFCgfTjDxw5djxLa8ISlSApmWQxfKTUJqPP3-Kg6NU1Q",
+      "valid": true,
+      "claims": {
+        "iss": "joe",
+        "exp": 1300819380,
+        "http://example.com/is_root": true
+      }
+    },
+    {
+      "name": "RFC 7515 A.3, signature in the standard alphabet",
+      "jwk": {
+        "kty": "EC",
+        "crv": "P-256",
+        "x": "f83OJ3D2xF1Bg8vub9tLe1gHMzV76e8Tus9uPHvRVEU",
+        "y": "x_FEzRu9m36HLN_tue659LNpXW6pCyStikYjKIWI5a0"
+      },
+      "token": "eyJhbGciOiJFUzI1NiJ9.eyJpc3MiOiJqb2UiLA0KICJleHAiOjEzMDA4MTkzODAsDQogImh0dHA6Ly9leGFtcGxlLmNvbS9pc19yb290Ijp0cnVlfQ.DtEhU3ljbEg8L38VWAfUAqOyKAM6+Xx+F4GawxaepmXFCgfTjDxw5djxLa8ISlSApmWQxfKTUJqPP3+Kg6NU1Q",
+      "valid": true,
+      "claims": {
+        "iss": "joe",
+        "exp": 1300819380,
+        "http://example.com/is_root": true
+      }
+    }
+  ]
+}

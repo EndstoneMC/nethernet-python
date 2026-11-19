@@ -1,0 +1,315 @@
+{
+  "area": "NetworkID",
+  "spec": "SPEC.md section 4",
+  "baseline": "Minecraft Bedrock 1.26.60",
+  "parse": [
+    {
+      "text": "",
+      "form": "unset",
+      "string": "",
+      "valid": false
+    },
+    {
+      "text": "1234567890",
+      "form": "p2p",
+      "value": "1234567890",
+      "string": "1234567890",
+      "valid": true
+    },
+    {
+      "text": "0",
+      "form": "p2p",
+      "value": "0",
+      "string": "0",
+      "valid": false
+    },
+    {
+      "text": "000042",
+      "form": "p2p",
+      "value": "42",
+      "string": "42",
+      "valid": true
+    },
+    {
+      "text": "18446744073709551615",
+      "form": "p2p",
+      "value": "18446744073709551615",
+      "string": "18446744073709551615",
+      "valid": true
+    },
+    {
+      "text": "18446744073709551616",
+      "form": "unset",
+      "string": "",
+      "valid": false
+    },
+    {
+      "text": "123abc",
+      "form": "unset",
+      "string": "",
+      "valid": false
+    },
+    {
+      "text": " 123",
+      "form": "unset",
+      "string": "",
+      "valid": false
+    },
+    {
+      "text": "123 ",
+      "form": "unset",
+      "string": "",
+      "valid": false
+    },
+    {
+      "text": "+1",
+      "form": "unset",
+      "string": "",
+      "valid": false
+    },
+    {
+      "text": "-1",
+      "form": "unset",
+      "string": "",
+      "valid": false
+    },
+    {
+      "text": "１２３",
+      "form": "unset",
+      "string": "",
+      "valid": false
+    },
+    {
+      "text": "11111111111111111111111111111111",
+      "form": "realms",
+      "value": "11111111-1111-1111-1111-111111111111",
+      "string": "11111111-1111-1111-1111-111111111111",
+      "valid": true
+    },
+    {
+      "text": "6ba7b810-9dad-11d1-80b4-00c04fd430c8",
+      "form": "realms",
+      "value": "6ba7b810-9dad-11d1-80b4-00c04fd430c8",
+      "string": "6ba7b810-9dad-11d1-80b4-00c04fd430c8",
+      "valid": true
+    },
+    {
+      "text": "6BA7B810-9DAD-11D1-80B4-00C04FD430C8",
+      "form": "realms",
+      "value": "6ba7b810-9dad-11d1-80b4-00c04fd430c8",
+      "string": "6ba7b810-9dad-11d1-80b4-00c04fd430c8",
+      "valid": true
+    },
+    {
+      "text": "6ba7b8109dad11d180b400c04fd430c8",
+      "form": "realms",
+      "value": "6ba7b810-9dad-11d1-80b4-00c04fd430c8",
+      "string": "6ba7b810-9dad-11d1-80b4-00c04fd430c8",
+      "valid": true
+    },
+    {
+      "text": "00000000-0000-0000-0000-000000000000",
+      "form": "realms",
+      "value": "00000000-0000-0000-0000-000000000000",
+      "string": "00000000-0000-0000-0000-000000000000",
+      "valid": false
+    },
+    {
+      "text": "{6ba7b810-9dad-11d1-80b4-00c04fd430c8}",
+      "form": "unset",
+      "string": "",
+      "valid": false
+    },
+    {
+      "text": "urn:uuid:6ba7b810-9dad-11d1-80b4-00c04fd430c8",
+      "form": "unset",
+      "string": "",
+      "valid": false
+    },
+    {
+      "text": "6ba7b810-9dad11d1-80b4-00c04fd430c8-",
+      "form": "unset",
+      "string": "",
+      "valid": false
+    },
+    {
+      "text": "6ba7b810-9dad-11d1-80b4-00c04fd430cg",
+      "form": "unset",
+      "string": "",
+      "valid": false
+    },
+    {
+      "text": "6ba7b8109dad11d180b400c04fd430c",
+      "form": "unset",
+      "string": "",
+      "valid": false
+    },
+    {
+      "text": "6ba7b8109dad11d180b400c04fd430c8a",
+      "form": "unset",
+      "string": "",
+      "valid": false
+    },
+    {
+      "text": "6ba7b810-9dad-11d1-80b4-00c04fd430c",
+      "form": "unset",
+      "string": "",
+      "valid": false
+    },
+    {
+      "text": "not-a-network-id",
+      "form": "unset",
+      "string": "",
+      "valid": false
+    }
+  ],
+  "json_read": [
+    {
+      "json": "42",
+      "form": "p2p",
+      "value": "42"
+    },
+    {
+      "json": "0",
+      "form": "p2p",
+      "value": "0"
+    },
+    {
+      "json": "18446744073709551615",
+      "form": "p2p",
+      "value": "18446744073709551615"
+    },
+    {
+      "json": "-1",
+      "form": "p2p",
+      "value": "18446744073709551615"
+    },
+    {
+      "json": "-2",
+      "form": "p2p",
+      "value": "18446744073709551614"
+    },
+    {
+      "json": "true",
+      "form": "p2p",
+      "value": "1"
+    },
+    {
+      "json": "false",
+      "form": "p2p",
+      "value": "0"
+    },
+    {
+      "json": "1.5",
+      "form": "p2p",
+      "value": "1"
+    },
+    {
+      "json": "1.0",
+      "form": "p2p",
+      "value": "1"
+    },
+    {
+      "json": "5e9",
+      "form": "p2p",
+      "value": "705032704"
+    },
+    {
+      "json": "-1.0",
+      "form": "p2p",
+      "value": "4294967295"
+    },
+    {
+      "json": "-1.5",
+      "form": "p2p",
+      "value": "4294967295"
+    },
+    {
+      "json": "18446744073709551616",
+      "form": "p2p",
+      "value": "0"
+    },
+    {
+      "json": "-9223372036854775809",
+      "form": "p2p",
+      "value": "0"
+    },
+    {
+      "json": "\"42\"",
+      "form": "p2p",
+      "value": "42"
+    },
+    {
+      "json": "\"6ba7b810-9dad-11d1-80b4-00c04fd430c8\"",
+      "form": "realms",
+      "value": "6ba7b810-9dad-11d1-80b4-00c04fd430c8"
+    },
+    {
+      "json": "\"\"",
+      "form": "unset"
+    },
+    {
+      "json": "\"garbage\"",
+      "form": "unset"
+    },
+    {
+      "json": "null",
+      "form": "unset"
+    },
+    {
+      "json": "[1]",
+      "form": "unset"
+    },
+    {
+      "json": "{\"id\":1}",
+      "form": "unset"
+    }
+  ],
+  "json_write": [
+    {
+      "form": "p2p",
+      "value": "1234567890",
+      "json": "1234567890"
+    },
+    {
+      "form": "realms",
+      "value": "6ba7b810-9dad-11d1-80b4-00c04fd430c8",
+      "json": "\"6ba7b810-9dad-11d1-80b4-00c04fd430c8\""
+    },
+    {
+      "form": "unset",
+      "json": "null"
+    }
+  ],
+  "correlation_id": [
+    {
+      "form": "p2p",
+      "value": "1311768467463790320",
+      "correlation_id": "<nethernet>1234-5678-9abc-def0"
+    },
+    {
+      "form": "p2p",
+      "value": "1234567890",
+      "correlation_id": "<nethernet>0000-0000-4996-02d2"
+    },
+    {
+      "form": "realms",
+      "value": "6ba7b810-9dad-11d1-80b4-00c04fd430c8",
+      "correlation_id": "<nethernet>6ba7b810-9dad-11d1-80b4-00c04fd430c8"
+    },
+    {
+      "form": "unset",
+      "correlation_id": ""
+    },
+    {
+      "form": "p2p",
+      "value": "0",
+      "correlation_id": ""
+    },
+    {
+      "form": "realms",
+      "value": "00000000-0000-0000-0000-000000000000",
+      "correlation_id": ""
+    }
+  ]
+}

@@ -1,0 +1,46 @@
+{
+  "area": "LAN discovery encryption",
+  "spec": "SPEC.md section 8",
+  "baseline": "Minecraft Bedrock 1.26.60",
+  "keys": [
+    {
+      "application_id": 3735928559,
+      "key_hex": "eed4c37861936c6ebb91ab9d195c1b489de46362d3bb8e30d8aab08bf217e6f3"
+    }
+  ],
+  "seal": [
+    {
+      "name": "NetherNet",
+      "application_id": 3735928559,
+      "plaintext_hex": "4e65746865724e6574",
+      "envelope_hex": "365cc9aeaff3358d65f08e11c57a060efb1d1cda080840ad6a4a41e27d3d7990a37c27b89c42919b52d8a12cc996a384"
+    }
+  ],
+  "open_rejects": [
+    {
+      "name": "under 32 bytes",
+      "application_id": 3735928559,
+      "envelope_hex": "00000000000000000000000000000000000000000000000000000000000000"
+    },
+    {
+      "name": "MAC byte flipped",
+      "application_id": 3735928559,
+      "envelope_hex": "c95cc9aeaff3358d65f08e11c57a060efb1d1cda080840ad6a4a41e27d3d7990a37c27b89c42919b52d8a12cc996a384"
+    },
+    {
+      "name": "ciphertext byte flipped",
+      "application_id": 3735928559,
+      "envelope_hex": "365cc9aeaff3358d65f08e11c57a060efb1d1cda080840ad6a4a41e27d3d7990a37c27b89c42919b52d8a12cc996a37b"
+    },
+    {
+      "name": "ciphertext not whole blocks",
+      "application_id": 3735928559,
+      "envelope_hex": "365cc9aeaff3358d65f08e11c57a060efb1d1cda080840ad6a4a41e27d3d7990a37c27b89c42919b52d8a12cc996a3"
+    },
+    {
+      "name": "other application id",
+      "application_id": 305419896,
+      "envelope_hex": "365cc9aeaff3358d65f08e11c57a060efb1d1cda080840ad6a4a41e27d3d7990a37c27b89c42919b52d8a12cc996a384"
+    }
+  ]
+}
