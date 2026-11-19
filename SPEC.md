@@ -218,7 +218,7 @@ A NetworkID has one of three forms:
 
 - A P2P id MUST print as unsigned decimal with no sign, padding or leading zeros, so 0 prints `0`.
 - LAN discovery and LAN signaling carry only the P2P form, as a raw `u64`.
-- The id in an HTTP signaling path is always P2P. A Realms id reaches BDS from the network only through online signaling.
+- The id in an HTTP signaling path is always P2P. A Realms id reaches BDS from the network only through online signaling, as a JSON string.
 - An unset id is invalid. A P2P id of 0 and the nil UUID parse but are invalid.
 - Two ids are equal only when they have the same form and the same value. Unset equals unset.
 
@@ -888,7 +888,7 @@ The states are libwebrtc's ICE connection states, the values of the W3C `RTCIceC
 - A close with no error, as when the peer resets the channel's stream, reports 0.
 - A close with an error, as on an SCTP ABORT from the peer or a transport failure, reports data channel closed (32).
 - A session reports one close reason, the first. A later channel close or ABORT on the same session reports nothing.
-- After a malformed message (Section 11.5) BDS closes the channel it came on. It starts a stream reset by itself only in this case. That close carries no error, so the session ends with reason 0. For the reliable channel BDS sends a stream reset request for that channel's stream only, answers the peer's reset, then sends ABORT and DTLS close_notify, all within about 1 ms.
+- After a malformed message BDS closes the channel it came on: a 0- or 1-byte message or a broken fragment countdown on the reliable channel (Section 11.4), or a 0- or 1-byte message on the unreliable channel (Section 11.5). It starts a stream reset by itself only in these cases. That close carries no error, so the session ends with reason 0. For the reliable channel BDS sends a stream reset request for that channel's stream only, answers the peer's reset, then sends ABORT and DTLS close_notify, all within about 1 ms.
 - Otherwise BDS sends a stream reset only as the answer to the peer's: a success response, a reset of its own outgoing stream for each one reset, then ABORT and close_notify within a millisecond.
 - BDS treats a stream reset and an ABORT from the peer the same way, as a full close.
 - When BDS closes a session, for a game-layer disconnect or a server stop, it sends an SCTP ABORT and then a DTLS close_notify in a separate datagram. It sends no SHUTDOWN, no stream reset and no signaling message first. The closing side reports 0 at once, then closes the peer connection, and that close reports nothing more. A server stop sends the ABORT on every session within 0.16 s.
@@ -1209,7 +1209,7 @@ This section is informative. Each value is defined in the section it references.
 | HTTP signaling server | on for a dedicated server, off for a hosting client | on or off | listener | none; on with `transport=nethernet` | 6.3 |
 | HTTP signaling port | 19132 | TCP port | listener | `server-port` | 6.3 |
 | HTTP signaling bind address | `[::]`, dual stack | address | listener | `server-ip` | 6.3 |
-| LAN signaling | on | on or off | both | none; forced on | 6.2 |
+| LAN signaling | on | on or off | both | none; a dedicated server forces it on at creation | 6.2 |
 | LAN visibility | on | on or off | listener | `enable-lan-visibility` | 7.4 |
 | Trickle ICE | on | on or off | both; LAN sessions override it | none | 12.5 |
 | ICE servers | none | up to 16 | both | none | 10.1 |
@@ -1224,6 +1224,7 @@ A dedicated server with the shipped `server.properties`, observed on BDS 1.26.60
 
 - `transport=nethernet` is the shipped value.
 - It serves HTTP signaling on plain TCP `[::]:19132` and LAN discovery and LAN signaling on UDP `[::]:7551`.
+- It turns LAN signaling on when it creates the transport and never turns it off, whatever `server.properties` says.
 - It sends no discovery Requests and answers each one with a Response.
 - It opens no socket on `server-portv6`, and none on `server-udp-ports` until a session is live.
 - It also signs in to the online signaling service and sets an empty relay list after it signs in, so it never uses ICE servers.
