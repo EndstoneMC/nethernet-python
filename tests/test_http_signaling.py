@@ -468,14 +468,36 @@ async def test_a_connecterror_answers_200_application_sdp_with_the_bare_code():
     assert answer == response("200 OK", "application/sdp", b"37")
 
 
-async def test_a_signal_for_no_pending_request_is_not_delivered():
+async def test_a_signal_for_no_pending_request_is_dropped_and_reported_as_success():
     _, server = await start_host()
     try:
-        assert not server.send(NetworkID.p2p(1), "CONNECTRESPONSE 1 v=0")
-        assert not server.send(NetworkID.p2p(1), "CONNECTRESPONSE")
-        assert not server.send(NetworkID.p2p(1), "CONNECTRESPONSE " + "9" * 5000 + " v=0")
+        assert server.send(NetworkID.p2p(1), "CONNECTRESPONSE 1 v=0") is None
+        assert server.send(NetworkID.p2p(1), "CONNECTRESPONSE") is None
+        assert server.send(NetworkID.p2p(1), "CONNECTRESPONSE " + "9" * 5000 + " v=0") is None
     finally:
         await server.aclose()
+
+
+async def test_later_signals_for_an_answered_session_are_dropped_and_reported_as_success():
+    host = Host()
+    outcomes = []
+
+    async def on_signal(sender: NetworkID, message: str) -> None:
+        session_id = message.split(" ")[1]
+        for reply in ("CONNECTRESPONSE {id} v=0\r\n", "CANDIDATEADD {id} c", "CONNECTERROR {id} 5"):
+            outcomes.append(host.server.send(sender, reply.format(id=session_id)))
+
+    host.on_signal = on_signal
+    _, server = await start_host(host)
+    try:
+        answer = await exchange(server.bound_port, post("/v1/join/123", OFFER.encode()))
+        assert server.send(NetworkID.p2p(123), "CONNECTRESPONSE 1 v=1\r\n") is None
+        again = await exchange(server.bound_port, post("/v1/join/123", OFFER.encode()))
+    finally:
+        await server.aclose()
+    assert outcomes == [None] * 6
+    assert answer == response("200 OK", "application/sdp", b"v=0\r\n")
+    assert again == response("200 OK", "application/sdp", b"v=0\r\n")
 
 
 async def test_aiohttp_client_posts_an_offer_and_reads_the_answer():

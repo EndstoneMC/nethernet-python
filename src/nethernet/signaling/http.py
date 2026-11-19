@@ -408,16 +408,14 @@ class HttpSignalingServer:
         await self._server.wait_closed()
         self._server = None
 
-    def send(self, remote: NetworkID, message: str) -> bool:
+    def send(self, remote: NetworkID, message: str) -> None:
         split = _split_signal(message)
         if split is None:
-            return False
+            return
         session_id, data = split
         future = self._pending.get((remote.value, session_id))
-        if future is None or future.done():
-            return False
-        future.set_result(data)
-        return True
+        if future is not None and not future.done():
+            future.set_result(data)
 
     async def _on_connection(
         self, reader: asyncio.StreamReader, writer: asyncio.StreamWriter

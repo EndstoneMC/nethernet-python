@@ -890,3 +890,55 @@ def test_a_player_without_a_string_key_cpk_fails_with_identity_not_allowed(cpk):
     with pytest.raises(InvalidIdentity) as info:
         verify_player_identity(envelope_sdp(SDP, "x", token, sign_fingerprints(SDP, key)))
     assert info.value.error == SessionError.IDENTITY_NOT_ALLOWED
+
+
+def test_json_keys_sort_by_utf8_bytes():
+    value = {"\uffff": 1, "\U0001f600": 2, "b": 3, "B": 4, "\u00e9": 5}
+    assert canonical_json(value) == '{"B":4,"b":3,"\u00e9":5,"\uffff":1,"\U0001f600":2}'
+
+
+@pytest.mark.parametrize(
+    ("value", "expected"),
+    [("a\x00b", '"a"'), ("\x00", '""'), ("x\x01\x00\x01", '"x\\u0001"')],
+)
+def test_json_strings_and_keys_are_cut_at_the_first_nul(value, expected):
+    assert canonical_json(value) == expected
+    assert canonical_json({value: 1}) == "{" + expected + ":1}"
+
+
+@pytest.mark.parametrize(
+    ("value", "expected"),
+    [
+        (0, "0"),
+        (-7, "-7"),
+        (31536000, "31536000"),
+        (2**64, "18446744073709551616"),
+        (1.5, "1.50"),
+        (2.0, "2.0"),
+        (0.1, "0.10"),
+        (-0.25, "-0.250"),
+        (1 / 3, "0.3333333333333333"),
+        (123456.789, "123456.7890"),
+        (1e20, "1.000000000000000e+20"),
+        (1e-7, "1.000000000000000e-07"),
+    ],
+)
+def test_json_numbers(value, expected):
+    assert canonical_json(value) == expected
+
+
+def test_token_times_are_integers_and_the_spki_point_is_uncompressed():
+    key = generate_operator_key()
+    header, payload, _ = IdentitySigner(key, clock=lambda: 1000.9).token().split(".")
+    claims = json.loads(unb64url(payload))
+    assert (type(claims["iat"]), type(claims["exp"])) == (int, int)
+    assert unb64url(payload).endswith(b'"exp":1060,"iat":1000}' + bytes([10]))
+    spki = base64.b64decode(json.loads(unb64url(header))["x5u"])
+    assert len(spki) == 120
+    assert spki[23] == 0x04
+
+
+@pytest.mark.parametrize("value", [float("nan"), float("inf"), float("-inf")])
+def test_json_refuses_nan_and_infinity(value):
+    with pytest.raises(TypeError):
+        canonical_json({"a": value})

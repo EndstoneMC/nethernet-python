@@ -196,9 +196,10 @@ class Transport:
     async def _http_send(self, remote: NetworkID, message: str) -> SessionError | None:
         base = self._bases.get(remote)
         if base is None:
-            if self._http is not None and self._http.send(remote, message):
-                return None
-            return SessionError.SIGNALING_UNICAST_MESSAGE_DELIVERY_FAILED
+            if self._http is None:
+                return SessionError.SIGNALING_UNICAST_MESSAGE_DELIVERY_FAILED
+            self._http.send(remote, message)
+            return None
         try:
             response = await request_answer(
                 base, self.local_id, message, timeout=self._negotiation_timeout

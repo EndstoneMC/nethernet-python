@@ -3,6 +3,7 @@ from __future__ import annotations
 import base64
 import binascii
 import json
+import math
 import re
 import time
 import uuid
@@ -122,7 +123,7 @@ _NAMED_ESCAPES = {
 
 def _json_string(text: str) -> str:
     out = ['"']
-    for char in text:
+    for char in text.partition("\x00")[0]:
         escaped = _NAMED_ESCAPES.get(char)
         if escaped is not None:
             out.append(escaped)
@@ -132,6 +133,15 @@ def _json_string(text: str) -> str:
             out.append(char)
     out.append('"')
     return "".join(out)
+
+
+def json_number(value: float) -> str:
+    if math.isnan(value) or math.isinf(value):
+        raise TypeError(f"cannot encode {value!r} as JSON")
+    text = f"{value:#.16g}"
+    if "e" in text or not text.endswith("0"):
+        return text
+    return text.rstrip("0") + "0"
 
 
 def canonical_json(value: object) -> str:
@@ -148,8 +158,10 @@ def canonical_json(value: object) -> str:
         return "false"
     if value is None:
         return "null"
-    if isinstance(value, int | float):
-        return json.dumps(value)
+    if isinstance(value, int):
+        return str(int(value))
+    if isinstance(value, float):
+        return json_number(value)
     raise TypeError(f"cannot encode {type(value).__name__} as JSON")
 
 
