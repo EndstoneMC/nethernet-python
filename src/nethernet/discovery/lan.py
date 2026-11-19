@@ -327,6 +327,11 @@ class LanTransport(asyncio.DatagramProtocol):
 
     def _bind(self, port: int) -> socket.socket:
         version = _ip_version(self._bind_host)
+        if self._bind_host and version is None:
+            socket.getaddrinfo(
+                self._bind_host, port, type=socket.SOCK_DGRAM, flags=socket.AI_NUMERICHOST
+            )
+            raise socket.gaierror(socket.EAI_NONAME, "bind address is not an IP address")
         if version == 4:
             return _bind_ipv4(self._bind_host, port)
         if version == 6 and self._bind_host != "::":
