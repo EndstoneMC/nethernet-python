@@ -1,27 +1,25 @@
 # Examples
 
-Runnable examples for the `nethernet` package. Install it first (`uv sync --extra dev`), then run any script directly.
+Runnable examples for the `nethernet` package. Install it first with `uv sync --extra dev`, then run any script directly.
 
 | Script | What it shows |
 | --- | --- |
-| [echo_server.py](echo_server.py) / [echo_client.py](echo_client.py) | A host advertises itself, a client finds it and echoes messages. |
-| [http_echo_server.py](http_echo_server.py) / [http_echo_client.py](http_echo_client.py) | The same by address, with operator identity assertions. |
-| [discover_hosts.py](discover_hosts.py) | List the NetherNet hosts that are advertising. |
+| [serve_echo.py](serve_echo.py) | A host that echoes every packet back. |
+| [connect_echo.py](connect_echo.py) | A client that sends three lines and prints the echoes. |
+| [discover_hosts.py](discover_hosts.py) | List the hosts that answer LAN discovery. |
 
-Start a server in one terminal and the matching client in another. The LAN pair finds each
-other by UDP broadcast, which a machine does not deliver to its own processes, so on one
-machine pass `--loopback` to both ends:
+Start the host in one terminal and the client in another:
 
 ```shell
-python echo_server.py --loopback
-python echo_client.py --loopback
+python serve_echo.py
+python connect_echo.py 127.0.0.1
+python discover_hosts.py
 ```
 
-Across two machines drop the flag. Both ends must agree on `--port` and `--app-id`, since a
-host only answers discovery requests carrying its own Application Id. The HTTP scripts need no
-such flag — they connect to an address — and take `--host` / `--port` and `--url`. See `--help`
-on any script.
+A machine does not deliver its own UDP broadcast to itself, so on one machine point discovery at the host's LAN port instead:
 
-`spike_aiortc.py` is not an example — it probes the installed aiortc for the behavior
-[`tasks/spike-aiortc.md`](../tasks/spike-aiortc.md) records, and `tests/test_aiortc_spike.py`
-runs it to catch changes on upgrade.
+```shell
+python discover_hosts.py --broadcast-host 127.0.0.1
+```
+
+`connect_echo.py` takes a `host`, `host:port` or URL. See `--help` on any script.

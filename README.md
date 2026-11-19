@@ -7,13 +7,15 @@ A Python implementation of the NetherNet transport, built on asyncio with WebRTC
 [aiortc](https://github.com/aiortc/aiortc).
 
 ```python
-import nethernet
+import contextlib, nethernet
 
-async for host in nethernet.discover(timeout=3):
-    async with await nethernet.connect(host) as conn:
-        await conn.send(b"\x06\xc1...")
-        print(await conn.recv())
-    break
+hosts = nethernet.discover(timeout=3)
+async with contextlib.aclosing(hosts):
+    async for host in hosts:
+        async with nethernet.connect(host) as conn:
+            await conn.send(b"Á...")
+            print(await conn.recv())
+        break
 ```
 
 ## Installation
@@ -32,67 +34,60 @@ The import name is `nethernet`. Requires Python 3.11 or newer.
 
 ## Entry points
 
-| Entry points | Purpose |
+| Entry point | Purpose |
 | --- | --- |
-| `serve` / `connect` / `discover` | accept, dial and find NetherNet hosts |
-| `serve_http` / `connect_http` | accept and dial NetherNet hosts by address |
+| `serve` | host connections, with HTTP and LAN signaling together |
+| `connect` | dial a host by address, `NetworkID` or discovered host |
+| `discover` | find hosts on the LAN |
 
-Both hand back the same `Connection`, a message pipe with `send` / `recv`, and one class
-serves both ends of a connection. The address-based entry points follow Mojang's
+`connect` and `serve` hand back the same `Connection`, a message pipe with `send` / `recv`. A
+string target is an address, `host`, `host:port` or a URL, and signals over HTTP as in Mojang's
 [NetherNet onboarding guide](https://github.com/Mojang/bedrock-protocol-docs/blob/main/NetherNetOnboardingGuide.md).
+A `NetworkID` or a host from `discover` signals over the LAN.
 
 ## Quick start
 
 ### Server
 
 ```python
-import asyncio, secrets, nethernet
-from nethernet import SendType, NetworkID
+import asyncio, nethernet
 
 async def handle(connection):
     async for packet in connection:
-        await connection.send(packet, SendType.RELIABLE)
+        await connection.send(packet)
 
 async def main():
-    local_id = NetworkID.p2p(secrets.randbits(64))
-    async with nethernet.serve(handle, local_id, advertisement=b"MCPE;...") as server:
+    async with nethernet.serve(handle, name="Echo") as server:
         await server.serve_forever()
 
 asyncio.run(main())
 ```
 
+`serve` listens for HTTP signaling on `[::]:19132` and for LAN discovery and signaling on UDP
+7551, and answers discovery requests without broadcasting its own.
+
 ### Client
 
 ```python
-async for host in nethernet.discover(timeout=3):
-    print(host.network_id, host.advertisement)
-    async with await nethernet.connect(host) as conn:
-        await conn.send(b"hello", SendType.RELIABLE)
-        reply = await conn.recv()
-    break
+async with nethernet.connect("192.168.1.20") as conn:
+    await conn.send(b"hello")
+    reply = await conn.recv()
 ```
 
-### Serving and dialing by address
+Over HTTP `connect` signs the offer with a fresh self-signed player, or with the `PlayerSigner`
+you pass. To pin the host's operator key, pass `on_server_identity`.
 
-`serve_http` exposes the endpoints a Bedrock client posts its offer to. Every answer must carry
-an operator identity assertion or the client refuses the connection:
+### Discovery
 
 ```python
-from nethernet import IdentitySigner, generate_operator_key
-
-key = generate_operator_key()
-async with nethernet.serve_http(
-    handle, port=8080,
-    identity_signer=IdentitySigner(key, domain="partner.example"),
-) as server:
-    await server.serve_forever()
+hosts = nethernet.discover(timeout=3)
+async with contextlib.aclosing(hosts):
+    async for host in hosts:
+        print(host.network_id, host.name)
 ```
 
-```python
-conn = await nethernet.connect_http("https://partner.example")
-```
-
-More runnable programs are in [examples/](examples).
+Runnable programs are in [examples/](examples): [serve_echo.py](examples/serve_echo.py),
+[connect_echo.py](examples/connect_echo.py) and [discover_hosts.py](examples/discover_hosts.py).
 
 ## Messages
 
@@ -120,7 +115,7 @@ envelope mechanics â€” canonical JSON, detached JWS over the DTLS fingerprints, 
 
 | Concern | Where it lives |
 | --- | --- |
-| signing an answer, verifying structure | `IdentitySigner`, `verify_server_identity` |
+| signing an answer or an offer | `IdentitySigner`, `PlayerSigner` |
 | authorizing a player from their token | your `validate_offer` callback |
 | pinning an operator key across connections | your `on_server_identity` callback |
 
@@ -136,7 +131,6 @@ Failures raise exceptions rather than returning sentinels. All inherit from `Net
 | `ConnectionFailed` | a dial never reached the connected state (`.error` carries the cause) |
 | `ConnectionClosed` | `send` / `recv` on a closed connection; `.error` is `NONE` for a clean close |
 | `InvalidIdentity` | an `a=identity` assertion is missing, malformed, or fails verification |
-| `SignalingRejected` | raise it from `validate_offer` to refuse an offer |
 
 `.error` is a `SessionError`, the same code Bedrock reports: negotiation timeouts, ICE
 failure, data-channel close.

@@ -42,7 +42,7 @@ asyncio_mode = "auto"
 testpaths = ["tests"]
 cache_dir = ".cache/pytest"
 addopts = "-n auto"
-markers = ["conformance: SPEC.md s11 conformance / differential byte-vector fixtures"]
+markers = ["conformance: byte-exact fixtures, see README.md"]
 
 [tool.ruff]
 line-length = 100

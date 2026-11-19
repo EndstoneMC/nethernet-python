@@ -66,7 +66,7 @@ The routes follow Mojang's public [NetherNet onboarding guide](https://github.co
 - So a rejecting host's `CONNECTERROR` answers `200 application/sdp` whose body is the bare decimal `SessionError`, not SDP (1.26.60).
 - Over HTTP BDS answers an offer whose `a=identity` is missing or fails verification this way with `SessionError.IDENTITY_NOT_ALLOWED`, body `37`. The check runs whatever `online-mode` says, so a client dialing BDS signs its offer (1.26.60).
 - An offer that passes the identity check but fails in WebRTC gets no signal back, so it ends in the 504 after 10 s (1.26.60).
-- This library answers a rejected offer with the HTTP status of its `SignalingRejected`, 403 by default, and a malformed identity envelope with 400.
+- This library answers an offer the application refuses with the same `37`, and an offer whose accept hook raises gets no signal back, so it ends in the 504 after 10 s.
 
 ## Connections
 

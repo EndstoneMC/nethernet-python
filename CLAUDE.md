@@ -31,4 +31,4 @@ Run `/verify` before every commit that touches code, tests, examples or `pyproje
 - `src/nethernet/signaling/`: the signaling message codec (`messages.py`) and the HTTP channel (`http.py`).
 - `src/nethernet/discovery/`: LAN discovery packets (`packets.py`), the AES-ECB and HMAC envelope (`crypto.py`), and the UDP transport (`lan.py`).
 - `src/nethernet/identity.py`: `a=identity` assertions.
-- `examples/`: runnable LAN and HTTP echo pairs; `tests/` imports each one.
+- `examples/`: `serve_echo.py`, `connect_echo.py` and `discover_hosts.py`; `tests/` imports each one.

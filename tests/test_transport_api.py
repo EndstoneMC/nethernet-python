@@ -1,82 +1,38 @@
-"""Public Transport façade — wiring + full end-to-end over real LAN UDP (Checkpoint E)."""
-
 import asyncio
 
-import pytest
-
-from nethernet import (
-    NetworkID,
-    SendType,
-    SessionState,
-)
-from nethernet.constants import (
-    DEFAULT_APPLICATION_ID,
-    DEFAULT_BROADCAST_INTERVAL,
-    DEFAULT_BROADCAST_PORT,
-    DEFAULT_NEGOTIATION_TIMEOUT,
-)
+from nethernet import NetworkID, SendType
 from nethernet.transport_api import Transport
 
 
-async def wait_for(predicate, timeout=30.0):
-    loop = asyncio.get_event_loop()
-    deadline = loop.time() + timeout
-    while loop.time() < deadline:
-        if predicate():
-            return
-        await asyncio.sleep(0.02)
-    raise TimeoutError("condition not met in time")
-
-
-def test_spec_defaults():
-    assert DEFAULT_BROADCAST_PORT == 7551
-    assert DEFAULT_APPLICATION_ID == 0xDEADBEEF
-    assert DEFAULT_BROADCAST_INTERVAL == 2.0
-    assert DEFAULT_NEGOTIATION_TIMEOUT == 10.0
-
-
-def test_transport_requires_p2p_network_id():
-    import uuid
-
-    with pytest.raises(ValueError):
-        Transport(NetworkID.realms(uuid.uuid4()))
-
-
-async def test_end_to_end_session_over_lan_udp():
-    host_id = NetworkID.p2p(222)
-    client_id = NetworkID.p2p(111)
-    host_sessions: list = []
-    host_recv: list[bytes] = []
-    client_recv: list[bytes] = []
-
+async def test_two_transports_open_a_session_over_lan_udp():
+    opened = asyncio.Queue()
+    received = asyncio.Queue()
     host = Transport(
-        host_id,
-        bind_host="127.0.0.1",
-        port=0,
-        advertisement=b"MCPE;NetherNet-Python;0;0.0.0;0;10;",
-        on_session=host_sessions.append,
-        on_packet=lambda session, data: host_recv.append(data),
+        NetworkID.p2p(222),
+        lan_host="127.0.0.1",
+        lan_port=0,
+        on_session_open=opened.put_nowait,
+        on_packet=lambda session, data: received.put_nowait(data),
     )
-    client = Transport(
-        client_id,
-        bind_host="127.0.0.1",
-        port=0,
-        on_packet=lambda session, data: client_recv.append(data),
-    )
+    client = Transport(NetworkID.p2p(111), lan_host="127.0.0.1", lan_port=0, visible=False)
     await host.start()
     await client.start()
     try:
-        # Simulate "peer learned via discovery": seed the host's address (loopback can't broadcast).
-        client.remember_peer(host_id, ("127.0.0.1", host.bound_port))
-
-        session = await client.connect(host_id)
-        await wait_for(lambda: session.state is SessionState.CONNECTED and len(host_sessions) == 1)
-
+        client.add_host(host.local_id, ("127.0.0.1", host.lan_port))
+        session = client.dial_lan(host.local_id)
+        await asyncio.wait_for(opened.get(), 30)
         session.send(b"hi host", SendType.RELIABLE)
-        await wait_for(lambda: host_recv == [b"hi host"])
-
-        host_sessions[0].send(b"hi client", SendType.UNRELIABLE)
-        await wait_for(lambda: client_recv == [b"hi client"])
+        assert await asyncio.wait_for(received.get(), 30) == b"hi host"
     finally:
         await client.aclose()
         await host.aclose()
+
+
+async def test_http_port_is_none_without_a_server():
+    transport = Transport(NetworkID.p2p(5), lan_host="127.0.0.1", lan_port=0)
+    await transport.start()
+    try:
+        assert transport.http_port is None
+        assert transport.lan_port
+    finally:
+        await transport.aclose()

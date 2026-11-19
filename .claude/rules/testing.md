@@ -18,4 +18,4 @@ paths:
 - A peer built with no ICE servers gathers host candidates only and contacts no STUN server (`protocol/transport.md`).
 - Every example exposes `main()` and runs nothing on import; `test_examples_import_and_expose_main` loads each one.
 - The loopback tests in `tests/test_peer_connection.py`, from `test_in_process_connect_and_exchange` on, connect two real peers and catch aiortc behaviour that changes on upgrade.
-- A machine does not deliver its own UDP broadcast to itself: run the LAN examples on one machine with `--loopback` on both ends.
+- A machine does not deliver its own UDP broadcast to itself: point `discover_hosts.py` at the host on one machine with `--broadcast-host 127.0.0.1 --broadcast-port <the host's --lan-port>`.

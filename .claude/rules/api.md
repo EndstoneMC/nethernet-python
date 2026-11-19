@@ -22,15 +22,15 @@ The facade is `api.py`, `transport_api.py` and `__init__.py`, a thin asyncio lay
 ## Entry points
 
 - Three entry points, never split by signaling channel. There is no `serve_http` or `connect_http`, and they need no deprecation before 0.1.0.
-- `serve(handler, ...)` is the only server entry point. One call serves LAN and HTTP signaling together. Its defaults come from `protocol/config.md`.
-- `connect(target, ...)` is the only client entry point. The target picks the channel: a `NetworkID` or `DiscoveredHost` goes over LAN, an HTTP signaling address over HTTP.
+- `serve(handler, ...)` is the only server entry point. One call serves HTTP signaling on `host`:`port` and LAN signaling on `lan_host`:`lan_port` together, answers discovery with `connection` 4 and does not broadcast. Its defaults come from `protocol/config.md`.
+- `connect(target, ...)` is the only client entry point. The target picks the channel: a `NetworkID` or `DiscoveredHost` goes over LAN, a string, `host`, `host:port` or an `http(s)://` URL, over HTTP. An HTTP connect signs with a fresh self-signed `PlayerSigner` unless `identity_signer` is given.
 - `discover(...)` is the LAN discovery call.
 
 ## Connection
 
 - One `Connection` class serves both ends. NetherNet is symmetric, so there is no client and server split.
 - `Connection` has `remote_id`, `local_id`, `connection_id` and `state`.
-- `connect` resolves once the session is connected and raises `ConnectionFailed(error)` otherwise.
+- `connect` resolves once the session is connected and raises `ConnectionFailed(error)` otherwise. A `timeout` that expires and a LAN host that is not found raise `TimeoutError`; error 14 stays with the negotiation timeout (`protocol/session.md`).
 - `send(data, reliability=SendType.RELIABLE)` raises `ConnectionClosed` unless connected. The framing rules (`protocol/framing.md`) apply unchanged.
 - `recv()` returns the next whole packet in FIFO order. After a close it hands out the buffered packets first, then raises `ConnectionClosed(error)`.
 - `async for packet in connection` stops on a clean close and raises on an error close.
@@ -39,18 +39,21 @@ The facade is `api.py`, `transport_api.py` and `__init__.py`, a thin asyncio lay
 ## Server and discovery
 
 - `serve` awaits `handler(connection)` once per connection, each in its own task.
-- `Server` has `serve_forever`, `aclose`, `set_advertisement`, `local_id`, `bound_port` and `connections`, the open connections. It is an async context manager. `serve_forever` returns on `aclose` or cancellation.
-- `discover(timeout=...)` yields each responder once as a frozen `DiscoveredHost(network_id, advertisement, address)` and ends at the deadline.
+- `serve` raises from a `host` or `lan_host` that does not parse or cannot be bound.
+- `Server` has `serve_forever`, `aclose`, `set_advertisement`, `local_id`, `bound_port` (HTTP), `lan_port` and `connections`, the open connections. `Server` is an async context manager, and `serve` and `connect` return an awaitable that is one too. `serve_forever` returns on `aclose` or cancellation.
+- `discover(timeout=...)` yields each responder once as a frozen `DiscoveredHost(network_id, advertisement, address)` and ends at the deadline. `DiscoveredHost` also reads the advertisement as `name`, `version`, `protocol`, `level`, `players`, `max_players`, `game_type`, `editor`, `hardcore`, `online_auth` and `self_signed_auth`, each `None` when the record does not parse. Break out of `discover` through `contextlib.aclosing`.
+- `discover` takes `timeout` (default 2.0 s), `bind_host`, `port`, `broadcast_host`, `broadcast_port` and `application_id`; the 2.0 s deadline and the first four are library options, not BDS settings.
+- `serve` advertises the stock BDS values by default: name `Dedicated Server`, level `Bedrock level`, 10 players, game type 0. `connection` is a wire constant in `discovery/packets.py`.
 - `connect(host)` reuses `host.address` for unicast signaling.
 - No public coroutine blocks the loop, and no example polls for a state.
 
 ## Errors and identity
 
-- Every public exception derives from `NetherNetError`: `ConnectionFailed`, `ConnectionClosed` (`.error` is `NONE` on a clean close), `InvalidIdentity` and `SignalingRejected` (an HTTP status, 403 by default).
+- Every public exception derives from `NetherNetError`: `ConnectionFailed`, `ConnectionClosed` (`.error` is `NONE` on a clean close), and `InvalidIdentity`.
 - Exception names carry no `Error` suffix, as in `websockets`.
 - Where BDS fails silently at startup, as on a bind or listen error, the library raises instead: the error propagates out of `serve()` and its startup, as with `asyncio.start_server`. What peers see on the wire still matches BDS.
 - The library accepts unknown query parameters for forward compatibility.
-- The library does the identity envelope only (`protocol/identity.md`). Authorizing a player (`validate_offer`) and pinning an operator key (`on_server_identity`) are the application's callbacks.
+- The library does the identity envelope only (`protocol/identity.md`). Authorizing a player (`validate_offer`, a raise refuses the offer) and pinning an operator key (`on_server_identity`) are the application's callbacks.
 
 ## Ask first
 

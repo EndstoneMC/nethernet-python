@@ -1,121 +1,227 @@
-"""Public async API — see docs/api-design.md.
-
-Module-level ``connect()`` / ``serve()`` / ``discover()`` returning a single ``Connection``
-(both roles; NetherNet is symmetric P2P) and a ``Server``. This mirrors how BDS wraps NetherNet
-(a ``Connector`` producing per-connection ``NetworkPeer`` objects), expressed in idiomatic
-asyncio (websockets-style): ``await send`` / ``await recv`` / ``async for`` / ``async with``.
-
-It is a thin layer over the internal :class:`~nethernet.transport_api.Transport` engine: a
-``Future`` resolves the connect/accept, and an ``asyncio.Queue`` per connection carries received
-packets. The byte-exact protocol code underneath is untouched.
-"""
+"""The public asyncio API: ``serve``, ``connect`` and ``discover``."""
 
 from __future__ import annotations
 
 import asyncio
 import inspect
-import ssl
-from collections.abc import AsyncIterator, Awaitable, Callable
+from collections.abc import AsyncIterator, Awaitable, Callable, Generator
 from dataclasses import dataclass
+from typing import Any, Generic, TypeVar
 
 from nethernet.constants import (
     DEFAULT_APPLICATION_ID,
     DEFAULT_BROADCAST_PORT,
     DEFAULT_NEGOTIATION_TIMEOUT,
 )
-from nethernet.discovery.lan import Address
+from nethernet.discovery.lan import LIMITED_BROADCAST, Address
+from nethernet.discovery.packets import (
+    LAN_SIGNALING_CONNECTION,
+    AdvertisementNonce,
+    HostAdvertisement,
+)
 from nethernet.errors import (
     ConnectionClosed,
     ConnectionFailed,
+    ConnectionFlags,
     SendType,
     SessionError,
 )
 from nethernet.identity import (
     IdentityEnvelope,
     IdentitySigner,
+    PlayerSigner,
     ServerIdentity,
     extract_identity,
-    strip_identity,
+    generate_operator_key,
+    verify_player_identity,
     verify_server_identity,
 )
 from nethernet.network_id import NetworkID, new_connection_id
 from nethernet.session import Session, SessionState
-from nethernet.signaling.http import HttpSignalingServer, request_answer
+from nethernet.session_manager import AcceptRequest
+from nethernet.signaling.http import DEFAULT_SERVER_PORT, resolve_base_url
 from nethernet.transport_api import Transport
 
-# Cap on packets buffered for an incoming connection before its Connection object exists (an app
-# packet can in principle arrive between a channel opening and both channels being open).
-_MAX_PENDING_PACKETS = 256
+MAX_PENDING_PACKETS = 256
+
+T = TypeVar("T")
 
 
 @dataclass(frozen=True)
 class DiscoveredHost:
-    """A host found via LAN discovery (docs/api-design.md s3.4)."""
+    """A host found by LAN discovery.
+
+    Attributes:
+        network_id: The host's network id.
+        advertisement: The raw advertisement bytes the host answered with.
+        address: The address the answer came from, reused for signaling.
+    """
 
     network_id: NetworkID
-    advertisement: bytes  # opaque application data (SPEC.md s7.3 Response)
-    address: Address  # source address; connect() reuses it for unicast signaling
+    advertisement: bytes
+    address: Address
+
+    def _info(self, field: str) -> Any:
+        info = HostAdvertisement.parse(self.advertisement)
+        return None if info is None else getattr(info, field)
+
+    @property
+    def name(self) -> str | None:
+        """The server name. None when the advertisement does not parse."""
+        return self._info("name")
+
+    @property
+    def version(self) -> str | None:
+        """The game version. None when the advertisement does not parse."""
+        return self._info("version")
+
+    @property
+    def protocol(self) -> int | None:
+        """The protocol version. None when the advertisement does not parse."""
+        return self._info("protocol")
+
+    @property
+    def level(self) -> str | None:
+        """The level name. None when the advertisement does not parse."""
+        return self._info("level")
+
+    @property
+    def players(self) -> int | None:
+        """The number of players online. None when the advertisement does not parse."""
+        return self._info("players")
+
+    @property
+    def max_players(self) -> int | None:
+        """The player limit. None when the advertisement does not parse."""
+        return self._info("max_players")
+
+    @property
+    def game_type(self) -> int | None:
+        """The level's game type. None when the advertisement does not parse."""
+        return self._info("game_type")
+
+    @property
+    def editor(self) -> bool | None:
+        """Whether the world is an editor world. None when the advertisement does not parse."""
+        return self._info("editor")
+
+    @property
+    def hardcore(self) -> bool | None:
+        """Whether the world is hardcore. None when the advertisement does not parse."""
+        return self._info("hardcore")
+
+    @property
+    def online_auth(self) -> bool | None:
+        """Whether online authentication is on. None when the advertisement does not parse."""
+        return self._info("online_auth")
+
+    @property
+    def self_signed_auth(self) -> bool | None:
+        """Whether self-signed authentication is on. None when the advertisement does not parse."""
+        return self._info("self_signed_auth")
+
+
+@dataclass(frozen=True)
+class IncomingOffer:
+    """An offer received over HTTP signaling, before any answer is made.
+
+    Attributes:
+        network_id_text: The dialer's network id in decimal.
+        network_id: The dialer's network id.
+        sdp: The offer SDP with ``a=identity`` stripped.
+        identity: The dialer's identity envelope, None when the offer has none.
+    """
+
+    network_id_text: str
+    network_id: NetworkID
+    sdp: str
+    identity: IdentityEnvelope | None
+
+
+class _Opening(Generic[T]):
+    def __init__(self, coroutine: Awaitable[T]) -> None:
+        self._coroutine = coroutine
+        self._value: Any = None
+
+    def __await__(self) -> Generator[Any, None, T]:
+        return self._coroutine.__await__()
+
+    async def __aenter__(self) -> T:
+        self._value = await self._coroutine
+        return self._value
+
+    async def __aexit__(self, *exc: object) -> None:
+        await self._value.__aexit__(*exc)
 
 
 class _Closed:
-    """Sentinel queued on a connection's receive queue to wake a waiting ``recv()`` on close."""
+    pass
 
 
 _CLOSED = _Closed()
 
 
 class Connection:
-    """One connection to a peer (BDS ``WebRTCNetworkPeer``); a single class for both roles.
+    """One connection to a peer, the same class on both ends.
 
-    ``endpoint`` is None for HTTP-signaled connections, which have no LAN transport to own.
+    Use it as an async context manager to close it on exit, and iterate it to receive packets
+    until a clean close.
+
+    Attributes:
+        local_id: This end's network id.
     """
 
     def __init__(
-        self, session: Session, endpoint: _Endpoint | None, *, owns_endpoint: bool = False
+        self, session: Session, local_id: NetworkID, owner: Transport | None = None
     ) -> None:
+        self.local_id = local_id
         self._session = session
-        self._endpoint = endpoint
-        self._owns_endpoint = owns_endpoint
-        self._recv_queue: asyncio.Queue[bytes | _Closed] = asyncio.Queue()
-        self._connected: asyncio.Future[None] = asyncio.get_event_loop().create_future()
+        self._owner = owner
+        self._queue: asyncio.Queue[bytes | _Closed] = asyncio.Queue()
+        self._connected: asyncio.Future[None] = asyncio.get_running_loop().create_future()
         self._closed = asyncio.Event()
-        self._closed_error: SessionError | None = None
-
-    # -- identity (SPEC.md s3, s9) -----------------------------------------------------
+        self._error: SessionError | None = None
+        self._cleanup: asyncio.Task | None = None
 
     @property
     def remote_id(self) -> NetworkID:
+        """The peer's network id."""
         return self._session.remote_id
 
     @property
-    def local_id(self) -> NetworkID:
-        return self._session.local_id
-
-    @property
     def connection_id(self) -> int:
+        """The connection id both ends agreed on."""
         return self._session.connection_id
 
     @property
     def state(self) -> SessionState:
+        """The session's connecting, active or errored state."""
         return self._session.state
 
-    # -- message I/O (SPEC.md s6.2-s6.3) -----------------------------------------------
-
     async def send(self, data: bytes, reliability: SendType = SendType.RELIABLE) -> None:
-        """Send an application packet; raises :class:`ConnectionClosed` if not connected."""
-        if self._session.state is not SessionState.CONNECTED:
-            raise ConnectionClosed(self._closed_error or SessionError.NONE)
-        self._session.send(data, reliability)
+        """Send one packet.
+
+        Args:
+            data: The whole packet.
+            reliability: Whether delivery is reliable and ordered.
+
+        Raises:
+            ConnectionClosed: The connection is not open.
+        """
+        opened = self._connected.done() and not self._connected.cancelled()
+        if not opened or self._closed.is_set() or not self._session.send(data, reliability):
+            raise ConnectionClosed(self._error or SessionError.NONE)
 
     async def recv(self) -> bytes:
-        """Return the next complete application packet (SPEC.md s6.4 FIFO).
+        """Return the next whole packet in arrival order.
 
-        Raises :class:`ConnectionClosed` once the connection is closed and the queue is drained.
+        Raises:
+            ConnectionClosed: The connection closed and every buffered packet was returned.
         """
-        item = await self._recv_queue.get()
+        item = await self._queue.get()
         if isinstance(item, _Closed):
-            self._recv_queue.put_nowait(_CLOSED)  # sticky: subsequent recv() also raises
-            raise ConnectionClosed(self._closed_error or SessionError.NONE)
+            self._queue.put_nowait(_CLOSED)
+            raise ConnectionClosed(self._error or SessionError.NONE)
         return item
 
     def __aiter__(self) -> AsyncIterator[bytes]:
@@ -129,16 +235,21 @@ class Connection:
                 raise StopAsyncIteration from None
             raise
 
-    # -- lifecycle (SPEC.md s9.5) ------------------------------------------------------
-
     async def close(self, error: SessionError = SessionError.NONE) -> None:
-        await self._session.aclose(error)
-        if self._owns_endpoint:
-            await self._endpoint.aclose()
+        """Close the connection.
+
+        Args:
+            error: The reason reported to this end only, the peer is not told.
+        """
+        self._session.close(error)
+        await self._session.wait_closed()
+        if self._owner is not None:
+            await self._owner.aclose()
 
     async def wait_closed(self) -> SessionError:
+        """Wait for the close and return its error, ``NONE`` for a clean close."""
         await self._closed.wait()
-        return self._closed_error or SessionError.NONE
+        return self._error or SessionError.NONE
 
     async def __aenter__(self) -> Connection:
         return self
@@ -146,433 +257,87 @@ class Connection:
     async def __aexit__(self, *exc: object) -> None:
         await self.close()
 
-    # -- internal: driven by the endpoint's engine callbacks ----------------------------
-
     def _mark_connected(self) -> None:
         if not self._connected.done():
             self._connected.set_result(None)
 
     def _mark_closed(self, error: SessionError) -> None:
-        self._closed_error = error
+        self._error = error
         if not self._connected.done():
             self._connected.set_exception(ConnectionFailed(error))
-            self._connected.exception()  # mark retrieved; awaiting the future still raises
-        self._recv_queue.put_nowait(_CLOSED)
+            self._connected.exception()
+        self._queue.put_nowait(_CLOSED)
         self._closed.set()
-
-    def _enqueue(self, data: bytes) -> None:
-        self._recv_queue.put_nowait(data)
+        if self._owner is not None and self._cleanup is None:
+            self._cleanup = asyncio.ensure_future(self._owner.aclose())
 
     async def _await_connected(self, timeout: float | None) -> None:
-        # timeout=None blocks until the session opens (or raises ConnectionFailed if it closes
-        # first); a timeout cancels the wait and reports the negotiation timeout.
-        try:
-            await asyncio.wait_for(self._connected, timeout)
-        except TimeoutError:
-            raise ConnectionFailed(
-                SessionError.NEGOTIATION_TIMEOUT_WAITING_FOR_RESPONSE
-            ) from None
+        await asyncio.wait_for(self._connected, timeout)
 
 
 class _Endpoint:
-    """Internal: wraps one :class:`Transport`, routing engine callbacks to per-connection objects.
-
-    BDS analog: ``NetherNetConnector`` (owns the ``connId -> peer`` map and the event queue).
-    """
-
-    def __init__(self, local_id: NetworkID, **transport_cfg: object) -> None:
-        self._conns: dict[int, Connection] = {}
-        self._pending_packets: dict[int, list[bytes]] = {}
-        self._incoming: asyncio.Queue[Connection] = asyncio.Queue()
-        self._discovered: asyncio.Queue[DiscoveredHost] = asyncio.Queue()
-        self._transport = Transport(
+    def __init__(
+        self,
+        local_id: NetworkID,
+        *,
+        on_change: Callable[[], None] | None = None,
+        **config: Any,
+    ) -> None:
+        self.conns: dict[Session, Connection] = {}
+        self.incoming: asyncio.Queue[Connection] = asyncio.Queue()
+        self.discovered: asyncio.Queue[DiscoveredHost] = asyncio.Queue()
+        self._pending: dict[Session, list[bytes]] = {}
+        self._on_change = on_change
+        self.transport = Transport(
             local_id,
-            on_session=self._on_session_open,
-            on_session_close=self._on_session_close,
+            on_session_open=self._on_open,
+            on_session_close=self._on_close,
             on_packet=self._on_packet,
             on_host_discovered=self._on_host_discovered,
-            **transport_cfg,  # type: ignore[arg-type]
+            **config,
         )
 
-    # -- lifecycle ---------------------------------------------------------------------
-
-    async def start(self) -> None:
-        await self._transport.start()
-
-    async def aclose(self) -> None:
-        # Closing the transport closes every live session, which marks each Connection closed
-        # through the on_session_close callback below — no separate sweep needed here.
-        await self._transport.aclose()
-
-    @property
-    def bound_port(self) -> int | None:
-        return self._transport.bound_port
-
-    @property
-    def local_id(self) -> NetworkID:
-        return self._transport.local_id
-
-    def start_broadcasting(self) -> None:
-        self._transport.start_broadcasting()
-
-    def broadcast_request(self) -> None:
-        self._transport._lan.broadcast_request()
-
-    def set_advertisement(self, advertisement: bytes | None) -> None:
-        self._transport.set_advertisement(advertisement)
-
-    async def connect(self, remote_id: NetworkID, *, timeout: float | None) -> Connection:
-        session = await self._transport.connect(remote_id)
-        conn = self._register(session, owns_endpoint=True)
-        await conn._await_connected(timeout)
+    def register(self, session: Session, owner: Transport | None = None) -> Connection:
+        conn = Connection(session, self.transport.local_id, owner)
+        self.conns[session] = conn
+        for data in self._pending.pop(session, []):
+            conn._queue.put_nowait(data)
         return conn
 
-    def remember_peer(self, network_id: NetworkID, addr: Address) -> None:
-        self._transport.remember_peer(network_id, addr)
-
-    # -- engine callbacks --------------------------------------------------------------
-
-    def _register(self, session: Session, *, owns_endpoint: bool) -> Connection:
-        conn = Connection(session, self, owns_endpoint=owns_endpoint)
-        self._conns[session.connection_id] = conn
-        for data in self._pending_packets.pop(session.connection_id, []):
-            conn._enqueue(data)
-        return conn
-
-    def _on_session_open(self, session: Session) -> None:
-        conn = self._conns.get(session.connection_id)
-        if conn is None:  # incoming connection
-            conn = self._register(session, owns_endpoint=False)
-            self._incoming.put_nowait(conn)
+    def _on_open(self, session: Session) -> None:
+        conn = self.conns.get(session)
+        if conn is None:
+            conn = self.register(session)
+            self.incoming.put_nowait(conn)
         conn._mark_connected()
+        if self._on_change is not None:
+            self._on_change()
 
-    def _on_session_close(self, session: Session, error: SessionError) -> None:
-        conn = self._conns.pop(session.connection_id, None)
+    def _on_close(self, session: Session, error: SessionError, summary: str) -> None:
+        self._pending.pop(session, None)
+        conn = self.conns.pop(session, None)
         if conn is not None:
             conn._mark_closed(error)
+            if self._on_change is not None:
+                self._on_change()
 
     def _on_packet(self, session: Session, data: bytes) -> None:
-        conn = self._conns.get(session.connection_id)
+        conn = self.conns.get(session)
         if conn is not None:
-            conn._enqueue(data)
+            conn._queue.put_nowait(data)
             return
-        buffer = self._pending_packets.setdefault(session.connection_id, [])
-        if len(buffer) < _MAX_PENDING_PACKETS:
+        buffer = self._pending.setdefault(session, [])
+        if len(buffer) < MAX_PENDING_PACKETS:
             buffer.append(data)
 
-    def _on_host_discovered(self, network_id: NetworkID, data: bytes, addr: Address) -> None:
-        self._discovered.put_nowait(DiscoveredHost(network_id, data, addr))
+    def _on_host_discovered(self, network_id: NetworkID, data: bytes, address: Address) -> None:
+        self.discovered.put_nowait(DiscoveredHost(network_id, data, address))
 
 
 class Server:
-    """Accepts incoming connections, one ``handler`` task each (BDS ServerNetherNetConnector)."""
+    """A running host that accepts connections over HTTP and LAN signaling.
 
-    def __init__(
-        self,
-        endpoint: _Endpoint,
-        handler: Callable[[Connection], Awaitable[None]],
-        *,
-        broadcast: bool,
-    ) -> None:
-        self._endpoint = endpoint
-        self._handler = handler
-        self._broadcast = broadcast
-        self._accept_task: asyncio.Task | None = None
-        self._handler_tasks: set[asyncio.Task] = set()
-        self._closed = asyncio.Event()
-
-    async def start(self) -> Server:
-        await self._endpoint.start()
-        if self._broadcast:
-            self._endpoint.start_broadcasting()
-        self._accept_task = asyncio.create_task(self._accept_loop())
-        return self
-
-    async def _accept_loop(self) -> None:
-        while True:
-            conn = await self._endpoint._incoming.get()
-            task = asyncio.create_task(self._run_handler(conn))
-            self._handler_tasks.add(task)
-            task.add_done_callback(self._handler_tasks.discard)
-
-    async def _run_handler(self, conn: Connection) -> None:
-        try:
-            await self._handler(conn)
-        except ConnectionClosed:
-            pass  # remote disconnect is a normal end of a handler
-        finally:
-            await conn.close()
-
-    async def serve_forever(self) -> None:
-        await self._closed.wait()
-
-    async def aclose(self) -> None:
-        if self._closed.is_set():
-            return
-        self._closed.set()
-        if self._accept_task is not None:
-            self._accept_task.cancel()
-        for task in list(self._handler_tasks):
-            task.cancel()
-        await self._endpoint.aclose()
-
-    def set_advertisement(self, advertisement: bytes | None) -> None:
-        self._endpoint.set_advertisement(advertisement)
-
-    @property
-    def local_id(self) -> NetworkID:
-        return self._endpoint.local_id
-
-    @property
-    def bound_port(self) -> int | None:
-        return self._endpoint.bound_port
-
-    @property
-    def connections(self) -> list[Connection]:
-        return list(self._endpoint._conns.values())
-
-    async def __aenter__(self) -> Server:
-        return await self.start()
-
-    async def __aexit__(self, *exc: object) -> None:
-        await self.aclose()
-
-
-# --- module-level entry points (docs/api-design.md s3.1) ---
-
-
-async def connect(
-    remote: NetworkID | DiscoveredHost,
-    *,
-    local_id: NetworkID | None = None,
-    application_id: int = DEFAULT_APPLICATION_ID,
-    port: int = DEFAULT_BROADCAST_PORT,
-    bind_host: str = "",
-    broadcast_host: str = "255.255.255.255",
-    broadcast_port: int | None = None,
-    ice_servers: list | None = None,
-    relay_only: bool = False,
-    negotiation_timeout: float = DEFAULT_NEGOTIATION_TIMEOUT,
-    timeout: float | None = None,
-) -> Connection:
-    """Dial a remote peer and return a connected :class:`Connection`.
-
-    BDS analog: ``ClientNetherNetConnector``. Resolves once the session is CONNECTED; raises
-    :class:`ConnectionFailed` on negotiation timeout / ICE failure.
-    """
-    endpoint = _Endpoint(
-        local_id or NetworkID.p2p(new_connection_id()),
-        application_id=application_id,
-        port=port,
-        bind_host=bind_host,
-        broadcast_host=broadcast_host,
-        broadcast_port=broadcast_port,
-        ice_servers=ice_servers,
-        relay_only=relay_only,
-        negotiation_timeout=negotiation_timeout,
-    )
-    await endpoint.start()
-    try:
-        if isinstance(remote, DiscoveredHost):
-            endpoint.remember_peer(remote.network_id, remote.address)
-            remote_id = remote.network_id
-        else:
-            remote_id = remote
-        return await endpoint.connect(remote_id, timeout=timeout)
-    except BaseException:
-        await endpoint.aclose()
-        raise
-
-
-def serve(
-    handler: Callable[[Connection], Awaitable[None]],
-    local_id: NetworkID,
-    *,
-    advertisement: bytes | None = None,
-    application_id: int = DEFAULT_APPLICATION_ID,
-    port: int = DEFAULT_BROADCAST_PORT,
-    bind_host: str = "",
-    broadcast_host: str = "255.255.255.255",
-    broadcast_port: int | None = None,
-    broadcast: bool = True,
-    ice_servers: list | None = None,
-    relay_only: bool = False,
-    negotiation_timeout: float = DEFAULT_NEGOTIATION_TIMEOUT,
-) -> Server:
-    """Accept incoming connections (BDS ``ServerNetherNetConnector::host``).
-
-    ``handler(connection)`` is awaited once per connection in its own task. Returns a
-    :class:`Server` async context manager; ``await server.serve_forever()`` runs until closed.
-    """
-    endpoint = _Endpoint(
-        local_id,
-        advertisement=advertisement,
-        application_id=application_id,
-        port=port,
-        bind_host=bind_host,
-        broadcast_host=broadcast_host,
-        broadcast_port=broadcast_port,
-        ice_servers=ice_servers,
-        relay_only=relay_only,
-        negotiation_timeout=negotiation_timeout,
-    )
-    return Server(endpoint, handler, broadcast=broadcast)
-
-
-async def discover(
-    *,
-    local_id: NetworkID | None = None,
-    application_id: int = DEFAULT_APPLICATION_ID,
-    port: int = DEFAULT_BROADCAST_PORT,
-    bind_host: str = "",
-    broadcast_host: str = "255.255.255.255",
-    broadcast_port: int | None = None,
-    timeout: float = 2.0,
-) -> AsyncIterator[DiscoveredHost]:
-    """Broadcast a Request and async-iterate discovered hosts (BDS ``NetherNetServerLocator``).
-
-    Yields each distinct responder as its Response arrives, for up to ``timeout`` seconds.
-    """
-    endpoint = _Endpoint(
-        local_id or NetworkID.p2p(new_connection_id()),
-        application_id=application_id,
-        port=port,
-        bind_host=bind_host,
-        broadcast_host=broadcast_host,
-        broadcast_port=broadcast_port,
-    )
-    await endpoint.start()
-    seen: set[NetworkID] = set()
-    loop = asyncio.get_event_loop()
-    deadline = loop.time() + timeout
-    try:
-        endpoint.broadcast_request()
-        while True:
-            remaining = deadline - loop.time()
-            if remaining <= 0:
-                return
-            try:
-                host = await asyncio.wait_for(endpoint._discovered.get(), timeout=remaining)
-            except TimeoutError:
-                return
-            if host.network_id in seen:
-                continue
-            seen.add(host.network_id)
-            yield host
-    finally:
-        await endpoint.aclose()
-
-
-# --- HTTP signaling (NetherNet Onboarding Guide s4) — connect_http() / serve_http() ---
-
-
-@dataclass(frozen=True)
-class IncomingOffer:
-    """An offer received over HTTP signaling, before any answer is generated."""
-
-    network_id_text: str  # raw URL path segment; treat as opaque (Guide s9)
-    network_id: NetworkID  # best-effort parsed form (may be unset)
-    sdp: str  # offer SDP with a=identity already stripped
-    identity: IdentityEnvelope | None  # client assertion; validating it is the app's policy
-
-
-def _make_http_session(
-    *,
-    local_id: NetworkID,
-    remote_id: NetworkID,
-    is_dialer: bool,
-    on_open: Callable[[Connection], None],
-    on_close: Callable[[Connection, SessionError], None],
-    ice_servers: list | None,
-    relay_only: bool,
-    negotiation_timeout: float,
-) -> Connection:
-    """A Session/Connection pair with no LAN transport (full ICE: nothing to trickle)."""
-    slot: list[Connection] = []
-    session = Session(
-        connection_id=new_connection_id(),
-        local_id=local_id,
-        remote_id=remote_id,
-        is_dialer=is_dialer,
-        send_signal=lambda message: None,
-        on_open=lambda session: on_open(slot[0]),
-        on_close=lambda session, error: on_close(slot[0], error),
-        on_packet=lambda session, data: slot[0]._enqueue(data),
-        ice_servers=ice_servers,
-        relay_only=relay_only,
-        negotiation_timeout=negotiation_timeout,
-    )
-    conn = Connection(session, None)
-    slot.append(conn)
-    return conn
-
-
-async def connect_http(
-    server_url: str,
-    *,
-    local_id: NetworkID | None = None,
-    ice_servers: list | None = None,
-    relay_only: bool = False,
-    negotiation_timeout: float = DEFAULT_NEGOTIATION_TIMEOUT,
-    capability_check: bool = True,
-    on_server_identity: Callable[[ServerIdentity], Awaitable[None] | None] | None = None,
-    identity_signer: IdentitySigner | None = None,
-    timeout: float | None = None,
-) -> Connection:
-    """Dial a host through HTTP signaling (Onboarding Guide s4, s7).
-
-    Full ICE: the complete offer goes in one ``POST {server_url}/v1/join/{local_id}`` and the
-    answer comes back in the response — no trickle, no LAN discovery. Requires the ``http``
-    extra (aiohttp).
-
-    ``on_server_identity`` receives the structurally verified server assertion (Guide s5.2);
-    trust policy — TLS vs TOFU pinning of ``key_digest`` — is the caller's, and raising from
-    the callback aborts the connection. Without it, any ``a=identity`` is stripped unverified.
-    ``identity_signer`` signs the offer; BDS rejects an offer without ``a=identity``.
-    """
-    local = local_id or NetworkID.p2p(new_connection_id())
-    conn = _make_http_session(
-        local_id=local,
-        remote_id=NetworkID.unset(),
-        is_dialer=True,
-        on_open=Connection._mark_connected,
-        on_close=Connection._mark_closed,
-        ice_servers=ice_servers,
-        relay_only=relay_only,
-        negotiation_timeout=negotiation_timeout,
-    )
-    session = conn._session
-    try:
-        offer_sdp = await session.offer()
-        if identity_signer is not None:
-            offer_sdp = identity_signer.sign(offer_sdp)
-        answer_sdp = await request_answer(
-            server_url,
-            str(local),
-            offer_sdp,
-            capability_check=capability_check,
-            timeout=negotiation_timeout,
-        )
-        if on_server_identity is not None:
-            answer_sdp, server_identity = verify_server_identity(answer_sdp)
-            result = on_server_identity(server_identity)
-            if inspect.isawaitable(result):
-                await result
-        else:
-            answer_sdp = strip_identity(answer_sdp)
-        await session.accept_answer(answer_sdp)
-        await conn._await_connected(timeout)
-        return conn
-    except BaseException:
-        await session.aclose(SessionError.GENERIC_FAILURE)
-        raise
-
-
-class HttpServer:
-    """Accepts connections via HTTP signaling; one ``handler`` task per connection.
-
-    The partner-flow analog of :class:`Server`: no LAN discovery or broadcast — clients learn
-    the signaling URL out of band (Guide s3).
+    Use it as an async context manager to close it on exit.
     """
 
     def __init__(
@@ -580,150 +345,425 @@ class HttpServer:
         handler: Callable[[Connection], Awaitable[None]],
         local_id: NetworkID,
         *,
-        host: str,
-        port: int,
-        ssl_context: ssl.SSLContext | None,
-        identity_signer: IdentitySigner | None,
-        validate_offer: Callable[[IncomingOffer], Awaitable[None] | None] | None,
-        ice_servers: list | None,
-        relay_only: bool,
-        negotiation_timeout: float,
+        fields: dict[str, Any],
+        broadcast: bool,
+        visible: bool,
+        **config: Any,
     ) -> None:
         self._handler = handler
-        self._local_id = local_id
-        self._identity_signer = identity_signer
-        self._validate_offer = validate_offer
-        self._ice_servers = ice_servers
-        self._relay_only = relay_only
-        self._negotiation_timeout = negotiation_timeout
-        self._signaling = HttpSignalingServer(
-            self._answer_offer, host=host, port=port, ssl_context=ssl_context
-        )
-        self._conns: dict[int, Connection] = {}
-        self._handler_tasks: set[asyncio.Task] = set()
+        self._fields = fields
+        self._broadcast = broadcast
+        self._visible = visible
+        self._nonce = AdvertisementNonce()
+        self._advertisement = b""
+        self._ping: dict[str, object] | None = None
+        self._accept_task: asyncio.Task | None = None
+        self._handlers: set[asyncio.Task] = set()
         self._closed = asyncio.Event()
+        self._endpoint = _Endpoint(
+            local_id,
+            on_change=self._refresh,
+            visible=visible,
+            get_advertisement=lambda: self._advertisement,
+            ping=lambda: self._ping,
+            **config,
+        )
 
-    async def start(self) -> HttpServer:
-        await self._signaling.start()
+    @property
+    def local_id(self) -> NetworkID:
+        """The host's network id."""
+        return self._endpoint.transport.local_id
+
+    @property
+    def bound_port(self) -> int | None:
+        """The bound HTTP signaling TCP port."""
+        return self._endpoint.transport.http_port
+
+    @property
+    def lan_port(self) -> int | None:
+        """The bound LAN UDP port."""
+        return self._endpoint.transport.lan_port
+
+    @property
+    def connections(self) -> list[Connection]:
+        """The open connections."""
+        return list(self._endpoint.conns.values())
+
+    def set_advertisement(self, **changes: Any) -> None:
+        """Change the advertised fields, such as ``name``, ``level`` or ``max_players``.
+
+        Raises:
+            TypeError: A field is not an advertisement field.
+        """
+        unknown = set(changes) - set(self._fields)
+        if unknown:
+            raise TypeError(f"unknown advertisement fields: {sorted(unknown)}")
+        self._fields.update(changes)
+        self._refresh()
+
+    async def serve_forever(self) -> None:
+        """Wait until the server closes."""
+        await self._closed.wait()
+
+    async def aclose(self) -> None:
+        """Close the server and every connection."""
+        if self._closed.is_set():
+            return
+        self._closed.set()
+        if self._accept_task is not None:
+            self._accept_task.cancel()
+        for task in list(self._handlers):
+            task.cancel()
+        await self._endpoint.transport.aclose()
+        await asyncio.gather(*self._handlers, return_exceptions=True)
+
+    async def __aenter__(self) -> Server:
         return self
 
-    # -- signaling callback ------------------------------------------------------------
+    async def __aexit__(self, *exc: object) -> None:
+        await self.aclose()
 
-    async def _answer_offer(self, network_id_text: str, offer_sdp: str) -> str:
-        offer_sdp, envelope = extract_identity(offer_sdp)  # malformed -> InvalidIdentity -> 400
-        remote_id = NetworkID.parse(network_id_text)
-        if self._validate_offer is not None:
-            result = self._validate_offer(
-                IncomingOffer(network_id_text, remote_id, offer_sdp, envelope)
-            )
-            if inspect.isawaitable(result):
-                await result
-        conn = _make_http_session(
-            local_id=self._local_id,
-            remote_id=remote_id,
-            is_dialer=False,
-            on_open=self._handle_open,
-            on_close=self._handle_close,
-            ice_servers=self._ice_servers,
-            relay_only=self._relay_only,
-            negotiation_timeout=self._negotiation_timeout,
+    async def _start(self) -> Server:
+        self._refresh()
+        await self._endpoint.transport.start()
+        if self._broadcast:
+            self._endpoint.transport.enable_broadcast()
+        self._accept_task = asyncio.create_task(self._accept_loop())
+        return self
+
+    def _refresh(self) -> None:
+        advertisement = HostAdvertisement(
+            **self._fields,
+            players=len(self._endpoint.conns),
+            nonce=self._nonce.update(),
+            connection=LAN_SIGNALING_CONNECTION,
         )
-        self._conns[conn.connection_id] = conn
-        try:
-            answer_sdp = await conn._session.answer(offer_sdp)
-        except BaseException:
-            self._conns.pop(conn.connection_id, None)
-            await conn._session.aclose(SessionError.FAILED_TO_CREATE_ANSWER)
-            raise
-        if self._identity_signer is not None:
-            answer_sdp = self._identity_signer.sign(answer_sdp)
-        return answer_sdp
+        self._advertisement = advertisement.serialize()
+        self._ping = None
+        if self._visible:
+            self._ping = {
+                "name": advertisement.name,
+                "protocol": advertisement.protocol,
+                "version": advertisement.version,
+                "level": advertisement.level,
+                "players": advertisement.players,
+                "maxPlayers": advertisement.max_players,
+                "gameType": advertisement.game_type,
+            }
 
-    def _handle_open(self, conn: Connection) -> None:
-        conn._mark_connected()
-        task = asyncio.create_task(self._run_handler(conn))
-        self._handler_tasks.add(task)
-        task.add_done_callback(self._handler_tasks.discard)
-
-    def _handle_close(self, conn: Connection, error: SessionError) -> None:
-        self._conns.pop(conn.connection_id, None)
-        conn._mark_closed(error)
+    async def _accept_loop(self) -> None:
+        while True:
+            conn = await self._endpoint.incoming.get()
+            task = asyncio.create_task(self._run_handler(conn))
+            self._handlers.add(task)
+            task.add_done_callback(self._handlers.discard)
 
     async def _run_handler(self, conn: Connection) -> None:
         try:
             await self._handler(conn)
         except ConnectionClosed:
-            pass  # remote disconnect is a normal end of a handler
+            pass
         finally:
             await conn.close()
 
-    # -- lifecycle ---------------------------------------------------------------------
 
-    async def serve_forever(self) -> None:
-        await self._closed.wait()
-
-    async def aclose(self) -> None:
-        if self._closed.is_set():
-            return
-        self._closed.set()
-        await self._signaling.aclose()
-        # Close sessions first so handlers end via ConnectionClosed; then reap stragglers.
-        for conn in list(self._conns.values()):
-            await conn._session.aclose()
-        self._conns.clear()
-        for task in list(self._handler_tasks):
-            task.cancel()
-        await asyncio.gather(*self._handler_tasks, return_exceptions=True)
-
-    @property
-    def local_id(self) -> NetworkID:
-        return self._local_id
-
-    @property
-    def bound_port(self) -> int | None:
-        return self._signaling.bound_port
-
-    @property
-    def connections(self) -> list[Connection]:
-        return list(self._conns.values())
-
-    async def __aenter__(self) -> HttpServer:
-        return await self.start()
-
-    async def __aexit__(self, *exc: object) -> None:
-        await self.aclose()
-
-
-def serve_http(
+def serve(
     handler: Callable[[Connection], Awaitable[None]],
     local_id: NetworkID | None = None,
     *,
-    host: str = "0.0.0.0",
-    port: int = 0,
-    ssl_context: ssl.SSLContext | None = None,
+    host: str = "",
+    port: int = DEFAULT_SERVER_PORT,
+    lan_host: str = "",
+    lan_port: int = DEFAULT_BROADCAST_PORT,
+    application_id: int = DEFAULT_APPLICATION_ID,
+    name: str = "Dedicated Server",
+    level: str = "Bedrock level",
+    max_players: int = 10,
+    game_type: int = 0,
+    editor: bool = False,
+    hardcore: bool = False,
+    online_auth: bool = False,
+    self_signed_auth: bool = False,
+    visible: bool = True,
+    broadcast: bool = False,
+    broadcast_host: str = LIMITED_BROADCAST,
+    broadcast_port: int | None = None,
+    ice_servers: list | None = None,
+    negotiation_timeout: float = DEFAULT_NEGOTIATION_TIMEOUT,
+    flags: ConnectionFlags = ConnectionFlags.NONE,
     identity_signer: IdentitySigner | None = None,
     validate_offer: Callable[[IncomingOffer], Awaitable[None] | None] | None = None,
-    ice_servers: list | None = None,
-    relay_only: bool = False,
-    negotiation_timeout: float = DEFAULT_NEGOTIATION_TIMEOUT,
-) -> HttpServer:
-    """Accept connections via HTTP signaling (Onboarding Guide s4). Requires ``nethernet[http]``.
+) -> _Opening[Server]:
+    """Start a host that serves HTTP signaling and LAN signaling together.
 
-    ``handler(connection)`` is awaited once per connection in its own task. ``validate_offer``
-    is the authorization hook — it sees the raw network id, the stripped offer SDP, and the
-    client's identity envelope (validating the token is the application's policy); raise
-    :class:`~nethernet.signaling.http.SignalingRejected` to refuse. ``identity_signer`` adds
-    the server assertion that real Minecraft clients require on every answer (Guide s5.2).
+    Await it, or use it as an async context manager, to get the running ``Server``. A bind
+    address that does not parse or cannot be bound raises here.
+
+    Args:
+        handler: Awaited once per connection, each in its own task.
+        local_id: The host's network id, random when None.
+        host: The HTTP signaling bind address, empty for dual stack.
+        port: The HTTP signaling TCP port.
+        lan_host: The LAN socket bind address, empty for dual stack.
+        lan_port: The LAN discovery and signaling UDP port.
+        application_id: The LAN discovery application id.
+        name: The advertised server name.
+        level: The advertised level name.
+        max_players: The advertised player limit.
+        game_type: The advertised game type.
+        editor: Whether the advertised world is an editor world.
+        hardcore: Whether the advertised world is hardcore.
+        online_auth: Whether the advertisement says online authentication is on.
+        self_signed_auth: Whether the advertisement says self-signed authentication is on.
+        visible: Whether the host answers LAN discovery requests and ``GET /v1/join``.
+        broadcast: Whether the host broadcasts discovery requests itself.
+        broadcast_host: The limited broadcast address for those requests.
+        broadcast_port: The port those requests go to, ``lan_port`` when None.
+        ice_servers: ICE servers for every connection.
+        negotiation_timeout: Seconds a session waits for its peer.
+        flags: Connection flags applied to every remote.
+        identity_signer: Signs each HTTP answer, a fresh operator key when None.
+        validate_offer: Called for each HTTP offer once its identity verifies, raise to refuse it.
+
+    Returns:
+        An awaitable that resolves to the running ``Server``.
+
+    Raises:
+        OSError: The bind address cannot be bound.
+        socket.gaierror: The bind address does not parse.
     """
-    return HttpServer(
+    signer = identity_signer or IdentitySigner(generate_operator_key())
+
+    async def accept(request: AcceptRequest) -> bool:
+        if not request.is_offer or request.via_lan:
+            return True
+        try:
+            verify_player_identity(request.sdp)
+            if validate_offer is not None:
+                stripped, envelope = extract_identity(request.sdp)
+                sender = request.remote_id
+                result = validate_offer(IncomingOffer(str(sender), sender, stripped, envelope))
+                if inspect.isawaitable(result):
+                    await result
+        except Exception:
+            return False
+        return True
+
+    server = Server(
         handler,
         local_id or NetworkID.p2p(new_connection_id()),
-        host=host,
-        port=port,
-        ssl_context=ssl_context,
-        identity_signer=identity_signer,
-        validate_offer=validate_offer,
+        fields={
+            "name": name,
+            "level": level,
+            "max_players": max_players,
+            "game_type": game_type,
+            "editor": editor,
+            "hardcore": hardcore,
+            "online_auth": online_auth,
+            "self_signed_auth": self_signed_auth,
+        },
+        broadcast=broadcast,
+        visible=visible,
+        application_id=application_id,
+        lan_host=lan_host,
+        lan_port=lan_port,
+        broadcast_host=broadcast_host,
+        broadcast_port=broadcast_port,
+        http_host=host,
+        http_port=port,
         ice_servers=ice_servers,
-        relay_only=relay_only,
         negotiation_timeout=negotiation_timeout,
+        connection_flags=lambda remote: flags,
+        accept=accept,
+        identity=signer.sign,
     )
+    return _Opening(server._start())
+
+
+async def _connect(
+    target: str | NetworkID | DiscoveredHost,
+    *,
+    local_id: NetworkID | None,
+    application_id: int,
+    port: int,
+    bind_host: str,
+    broadcast_host: str,
+    broadcast_port: int | None,
+    ice_servers: list | None,
+    negotiation_timeout: float,
+    flags: ConnectionFlags,
+    timeout: float | None,
+    identity_signer: PlayerSigner | None,
+    on_server_identity: Callable[[ServerIdentity], Awaitable[None] | None] | None,
+) -> Connection:
+    over_http = isinstance(target, str)
+    base_url = await resolve_base_url(target) if isinstance(target, str) else None
+
+    async def accept(request: AcceptRequest) -> bool:
+        if request.is_offer or request.via_lan or on_server_identity is None:
+            return True
+        try:
+            _, identity = verify_server_identity(request.sdp)
+            result = on_server_identity(identity)
+            if inspect.isawaitable(result):
+                await result
+        except Exception:
+            return False
+        return True
+
+    endpoint = _Endpoint(
+        local_id or NetworkID.p2p(new_connection_id()),
+        lan=not over_http,
+        http_client=over_http,
+        visible=False,
+        application_id=application_id,
+        lan_host=bind_host,
+        lan_port=port,
+        broadcast_host=broadcast_host,
+        broadcast_port=broadcast_port,
+        ice_servers=ice_servers,
+        negotiation_timeout=negotiation_timeout,
+        connection_flags=lambda remote: flags,
+        accept=accept,
+    )
+    transport = endpoint.transport
+    await transport.start()
+    try:
+        signer = identity_signer or (PlayerSigner.self_signed() if over_http else None)
+        sign = signer.sign if signer is not None else None
+        if base_url is not None:
+            session = transport.dial_http(base_url, identity=sign)
+        else:
+            remote_id = await _locate(endpoint, target, timeout or negotiation_timeout)
+            session = transport.dial_lan(remote_id, identity=sign)
+        conn = endpoint.register(session, transport)
+        await conn._await_connected(timeout)
+        return conn
+    except BaseException:
+        await transport.aclose()
+        raise
+
+
+async def _locate(endpoint: _Endpoint, target: NetworkID | DiscoveredHost, timeout: float):
+    transport = endpoint.transport
+    if isinstance(target, DiscoveredHost):
+        transport.add_host(target.network_id, target.address)
+        return target.network_id
+    transport.broadcast_request()
+    async with asyncio.timeout(timeout):
+        while True:
+            host = await endpoint.discovered.get()
+            if host.network_id == target:
+                transport.add_host(host.network_id, host.address)
+                return host.network_id
+
+
+def connect(
+    target: str | NetworkID | DiscoveredHost,
+    *,
+    local_id: NetworkID | None = None,
+    application_id: int = DEFAULT_APPLICATION_ID,
+    port: int = DEFAULT_BROADCAST_PORT,
+    bind_host: str = "",
+    broadcast_host: str = LIMITED_BROADCAST,
+    broadcast_port: int | None = None,
+    ice_servers: list | None = None,
+    negotiation_timeout: float = DEFAULT_NEGOTIATION_TIMEOUT,
+    flags: ConnectionFlags = ConnectionFlags.NONE,
+    timeout: float | None = None,
+    identity_signer: PlayerSigner | None = None,
+    on_server_identity: Callable[[ServerIdentity], Awaitable[None] | None] | None = None,
+) -> _Opening[Connection]:
+    """Connect to a host and resolve once the connection is open.
+
+    A string target is an HTTP signaling address, ``host``, ``host:port`` or an ``http://`` or
+    ``https://`` URL. A ``NetworkID`` or ``DiscoveredHost`` is reached over LAN signaling.
+
+    Args:
+        target: The host to connect to.
+        local_id: This end's network id, random when None.
+        application_id: The LAN discovery application id.
+        port: The LAN UDP port to bind.
+        bind_host: The LAN socket bind address, empty for dual stack.
+        broadcast_host: The limited broadcast address for discovery requests.
+        broadcast_port: The port discovery requests go to, ``port`` when None.
+        ice_servers: ICE servers for the connection.
+        negotiation_timeout: Seconds to wait for the host's answer.
+        flags: Connection flags for the connection.
+        timeout: Seconds to wait for the connection to open, unbounded when None.
+        identity_signer: Signs the offer over HTTP, a fresh self-signed player when None.
+        on_server_identity: Called with the host's verified operator identity, raise to refuse.
+
+    Returns:
+        An awaitable that resolves to the open ``Connection``, also an async context manager.
+
+    Raises:
+        ConnectionFailed: No signaling channel answered or the connection did not open.
+        TimeoutError: The host was not found or the connection did not open within ``timeout``.
+    """
+    return _Opening(
+        _connect(
+            target,
+            local_id=local_id,
+            application_id=application_id,
+            port=port,
+            bind_host=bind_host,
+            broadcast_host=broadcast_host,
+            broadcast_port=broadcast_port,
+            ice_servers=ice_servers,
+            negotiation_timeout=negotiation_timeout,
+            flags=flags,
+            timeout=timeout,
+            identity_signer=identity_signer,
+            on_server_identity=on_server_identity,
+        )
+    )
+
+
+async def discover(
+    *,
+    application_id: int = DEFAULT_APPLICATION_ID,
+    port: int = DEFAULT_BROADCAST_PORT,
+    bind_host: str = "",
+    broadcast_host: str = LIMITED_BROADCAST,
+    broadcast_port: int | None = None,
+    timeout: float = 2.0,
+) -> AsyncIterator[DiscoveredHost]:
+    """Find hosts on the LAN, yielding each one once until the deadline.
+
+    Args:
+        application_id: The LAN discovery application id.
+        port: The LAN UDP port to bind.
+        bind_host: The LAN socket bind address, empty for dual stack.
+        broadcast_host: The limited broadcast address for the request.
+        broadcast_port: The port the request goes to, ``port`` when None.
+        timeout: Seconds to listen for answers.
+
+    Yields:
+        Each host that answered.
+    """
+    endpoint = _Endpoint(
+        NetworkID.p2p(new_connection_id()),
+        visible=False,
+        application_id=application_id,
+        lan_host=bind_host,
+        lan_port=port,
+        broadcast_host=broadcast_host,
+        broadcast_port=broadcast_port,
+    )
+    await endpoint.transport.start()
+    seen: set[NetworkID] = set()
+    loop = asyncio.get_running_loop()
+    deadline = loop.time() + timeout
+    try:
+        endpoint.transport.broadcast_request()
+        while (remaining := deadline - loop.time()) > 0:
+            try:
+                host = await asyncio.wait_for(endpoint.discovered.get(), remaining)
+            except TimeoutError:
+                return
+            if host.network_id not in seen:
+                seen.add(host.network_id)
+                yield host
+    finally:
+        await endpoint.transport.aclose()
