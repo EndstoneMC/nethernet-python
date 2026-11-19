@@ -32,7 +32,8 @@ For RE agents only. Implementers never read this side (`protocol/cleanroom.md`).
 - Look for LAN id filters in the handler that owns each LAN event, not in the packet decoder. The decoder updates the peer table for every sender before any id filter runs.
 - Read the signaling receive path on the Linux server, which splits it into one visitor function per message variant, rather than the one huge Windows body.
 - The IDA instruction query's operand filters do not match memory displacements. Search for the instruction bytes instead.
+- Derive a virtual slot from the proxy vtable on each build. Linux has one more destructor slot, so Windows +0xB0 is Linux +0xB8.
 - Re-derive the names of small IP helpers from their bodies before reading a filter predicate. Inherited names have been found inverted.
 - With one fixed WebRTC UDP port every session shares one socket, so expect STUN 401 errors on the later sessions.
-- Never guess. Mark a fact you could not confirm "(unverified)" and say what is missing.
+- Never guess. A rule holds only confirmed facts: confirm each one, correct it, or prove it absent with the black-box test that settles it. Drop what you cannot settle, and never tag a fact "(unverified)".
 - Never edit the bedrock-headers checkout.

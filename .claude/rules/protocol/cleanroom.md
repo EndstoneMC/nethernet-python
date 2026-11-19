@@ -12,7 +12,6 @@ The rules in `.claude/rules/protocol/` are the clean-room spec. Rules describe B
 
 - "(1.26.60)" marks a fact checked against BDS 1.26.60.
 - "(1.26)" marks a fact observed on a 1.26 build before 1.26.60. Recheck it against 1.26.60.
-- "(unverified)" marks a fact not yet checked against any build.
 - Tags mark BDS facts only. A library mapping or a choice of this library carries none.
 - Change a tag only after checking the fact against that build.
 
