@@ -14,6 +14,7 @@ from nethernet.identity import (
     build_envelope,
     cpk_digest,
     decode_cpk,
+    decode_jwk,
     encode_cpk,
     encode_jwk,
     extract_identity,
@@ -113,20 +114,19 @@ def test_cpk_roundtrip():
 @pytest.mark.parametrize(
     ("curve", "scalar"), [(ec.SECP256R1(), 43), (ec.SECP384R1(), 176), (ec.SECP521R1(), 1)]
 )
-def test_decode_cpk_jwk_roundtrip(curve, scalar):
-    # These keys cover leading-zero coordinates on each supported curve.
+def test_jwk_roundtrip(curve, scalar):
     public_key = ec.derive_private_key(scalar, curve).public_key()
     assert encode_jwk(public_key) == public_jwk(public_key)
-    decoded = decode_cpk(public_jwk(public_key))
+    decoded = decode_jwk(public_jwk(public_key))
     assert decoded.public_numbers() == public_key.public_numbers()
     assert cpk_digest(decoded) == cpk_digest(decode_cpk(encode_cpk(public_key)))
 
 
-def test_decode_cpk_rejects_missing_jwk_member():
+def test_decode_jwk_rejects_missing_member():
     jwk = public_jwk(generate_operator_key().public_key())
     del jwk["x"]
     with pytest.raises(InvalidIdentity, match="^malformed cpk claim$"):
-        decode_cpk(jwk)
+        decode_jwk(jwk)
 
 
 @pytest.mark.parametrize(
@@ -137,28 +137,27 @@ def test_decode_cpk_rejects_missing_jwk_member():
         {"crv": []},
         {"x": 1},
         {"d": "AQ"},
-        {"x": "A" * 43, "y": "A" * 43},  # (0, 0) is not on P-256.
+        {"x": "A" * 43, "y": "A" * 43},
     ],
 )
-def test_decode_cpk_rejects_malformed_jwk(changes):
+def test_decode_jwk_rejects_malformed(changes):
     jwk = {**public_jwk(ec.derive_private_key(43, ec.SECP256R1()).public_key()), **changes}
     with pytest.raises(InvalidIdentity, match="^malformed cpk claim$"):
-        decode_cpk(jwk)
+        decode_jwk(jwk)
 
 
 @pytest.mark.parametrize("width", [31, 33])
-def test_decode_cpk_rejects_wrong_jwk_coordinate_width(width):
-    # Scalar 43 has a leading-zero y; both widths preserve the same valid point.
+def test_decode_jwk_rejects_wrong_coordinate_width(width):
     public_key = ec.derive_private_key(43, ec.SECP256R1()).public_key()
     jwk = public_jwk(public_key)
     value = public_key.public_numbers().y.to_bytes(width, "big")
     jwk["y"] = base64.urlsafe_b64encode(value).decode().rstrip("=")
     with pytest.raises(InvalidIdentity, match="^malformed cpk claim$"):
-        decode_cpk(jwk)
+        decode_jwk(jwk)
 
 
 @pytest.mark.parametrize("encoding", ["pad-bits", "padding"])
-def test_decode_cpk_rejects_noncanonical_jwk_coordinate(encoding):
+def test_decode_jwk_rejects_noncanonical_coordinate(encoding):
     jwk = public_jwk(ec.derive_private_key(43, ec.SECP256R1()).public_key())
     value = jwk["y"]
     if encoding == "pad-bits":
@@ -168,7 +167,7 @@ def test_decode_cpk_rejects_noncanonical_jwk_coordinate(encoding):
         jwk["y"] = value + "="
     assert base64.urlsafe_b64decode(jwk["y"] + "==") == base64.urlsafe_b64decode(value + "==")
     with pytest.raises(InvalidIdentity, match="^malformed cpk claim$"):
-        decode_cpk(jwk)
+        decode_jwk(jwk)
 
 
 def test_insert_identity_goes_before_first_media_line():
@@ -242,10 +241,18 @@ def test_player_signer_writes_a_der_cpk():
     verify_fingerprints(SDP, envelope.fingerprints, decode_cpk(claims["cpk"]))
 
 
-def test_verify_server_identity_rejects_expired_token():
-    signer = PlayerSigner(generate_operator_key(), domain="x", token_lifetime=-10)
-    with pytest.raises(InvalidIdentity, match="server identity token expired"):
+def test_verify_server_identity_rejects_a_der_cpk():
+    signer = PlayerSigner(generate_operator_key(), domain="self")
+    with pytest.raises(InvalidIdentity, match="JWT has no cpk claim"):
         verify_server_identity(signer.sign(SDP))
+
+
+def test_verify_server_identity_ignores_expiry():
+    key = generate_operator_key()
+    claims = {"cpk": encode_jwk(key.public_key()), "exp": 60, "iat": 0}
+    envelope = build_envelope("self", _sign_jwt(claims, key), sign_fingerprints(SDP, key))
+    _, identity = verify_server_identity(insert_identity(SDP, envelope))
+    assert identity.claims["exp"] == 60
 
 
 def test_verify_server_identity_rejects_resigned_fingerprints():
