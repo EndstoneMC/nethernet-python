@@ -52,14 +52,14 @@ A parsed message goes to the session of its sender `NetworkID` and connection id
 
 - A message that fails to parse is dropped silently. Nothing is sent back and no `SessionError` is reported (1.26.60).
 - `CONNECTREQUEST` first goes to the listener's application, with the identity assertion from the SDP if any (`identity.md`). With no application hook the offer is accepted (1.26.60).
-- An accepted `CONNECTREQUEST` with a new connection id opens an incoming session. One that matches an existing session is handled as `session.md` Routing says (1.26.60).
+- An accepted `CONNECTREQUEST` with a new connection id opens an incoming session. A later one that matches a session already incoming or outgoing is handled as `session.md` Routing says (1.26.60).
 - A declined `CONNECTREQUEST` is answered with `CONNECTERROR` carrying the same connection id and `SessionError.IDENTITY_NOT_ALLOWED` (37) (1.26.60).
-- `CONNECTRESPONSE` first goes to the dialer's application, with the identity assertion from the SDP. Accepted, the answer is applied. Declined, the dialer closes the session with `SessionError.IDENTITY_NOT_ALLOWED` (37) (1.26.60).
-- The listener ignores `CONNECTRESPONSE` and `CONNECTERROR` for its incoming sessions (1.26.60).
+- `CONNECTRESPONSE` goes to the application first, whatever session it is for, with the identity assertion from the SDP. Accepted, a dialer applies the answer and a listener does nothing. Declined, the matching session closes with `SessionError.IDENTITY_NOT_ALLOWED` (37), a listener session included. One for an unknown session is ignored with no 37 (1.26.60).
+- The listener ignores `CONNECTERROR` for its incoming sessions (1.26.60).
 - `CONNECTERROR` closes the dialer's outgoing session with the error it carries (1.26.60).
 - `CANDIDATEADD` adds the candidate to the session on either side (1.26.60).
 - `CONNECTRESPONSE` and `CONNECTERROR` for a session that does not exist are dropped silently (1.26.60).
-- `CANDIDATEADD` for a session that does not exist opens one with no direction yet and queues the candidate. A later `CONNECTREQUEST` with that connection id makes it an incoming session (1.26.60).
+- `CANDIDATEADD` for a session that does not exist opens a listener session with no direction yet and queues the candidate. The first `CONNECTREQUEST` with that connection id attaches to it and makes it incoming (1.26.60).
 - A session opened from a LAN message gets no identity assertion on its answer (1.26.60).
 
 ## Sending

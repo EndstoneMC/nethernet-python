@@ -53,7 +53,7 @@ Send a packet of `N` bytes with a `SendType`, with `F` the fragment size (1.26.6
 - Reliable channel: a message of 0 or 1 bytes discards the partial packet and closes `ReliableDataChannel` (1.26.60).
 - Reliable channel: the first fragment of a packet sets the expected header to its own header. Each later fragment must carry the expected header, which drops by one after every fragment with a non-zero header. A mismatch discards the partial packet and closes `ReliableDataChannel` (1.26.60).
 - Reliable channel: append each fragment's payload to the session's partial packet. A fragment with header 0 completes it: deliver it and start a new one. SCTP ordering is the only sequencing (1.26.60).
-- Unreliable channel: a message of 0 or 1 bytes closes `UnreliableDataChannel`, the channel it came on, and leaves `ReliableDataChannel` and its partial packet alone. Size is the only check on this channel (1.26.60).
+- Unreliable channel: a message of 0 or 1 bytes closes `UnreliableDataChannel`, which ends the whole session with reason 0 (`transport.md`). Size is the only check on this channel (1.26.60).
 - Unreliable channel: each message is a whole packet. Strip the header byte unchecked and deliver the rest (1.26.60).
 - A channel that closes discards the partial packet (1.26.60). `transport.md` says how the close ends the session.
 - Deliver packets to the application in FIFO order (1.26.60).

@@ -44,7 +44,7 @@ The facade is `api.py`, `transport_api.py` and `__init__.py`, a thin asyncio lay
 - `Server` has `serve_forever`, `aclose`, `set_advertisement`, `local_id`, `bound_port` (HTTP), `lan_port` and `connections`, the open connections. `Server` is an async context manager, and `serve` and `connect` return an awaitable that is one too. `serve_forever` returns on `aclose` or cancellation.
 - `discover(timeout=...)` yields each responder once as a frozen `DiscoveredHost(network_id, advertisement, address)` and ends at the deadline. `DiscoveredHost` also reads the advertisement as `name`, `version`, `protocol`, `level`, `players`, `max_players`, `game_type`, `editor`, `hardcore`, `online_auth` and `self_signed_auth`, each `None` when the record does not parse. Break out of `discover` through `contextlib.aclosing`.
 - `discover` takes `timeout` (default 2.0 s), `bind_host`, `port`, `broadcast_host`, `broadcast_port` and `application_id`; the 2.0 s deadline and the first four are library options, not BDS settings.
-- `serve` advertises the stock BDS values by default: name `Dedicated Server`, level `Bedrock level`, 10 players, game type 0. `connection` is a wire constant in `discovery/packets.py`.
+- `serve` advertises the stock BDS values by default: name `Dedicated Server`, level `Bedrock level`, 10 players, game type 0, protocol 2225, version `1.26.60`, `online_auth` and `self_signed_auth` both true. `connection` is a wire constant in `discovery/packets.py`.
 - `connect(host)` reuses `host.address` for unicast signaling.
 - No public coroutine blocks the loop, and no example polls for a state.
 

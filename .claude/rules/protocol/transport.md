@@ -36,11 +36,13 @@ paths:
 - An error, as on an SCTP ABORT from the peer or a transport failure, gives `SessionError.DATA_CHANNEL_CLOSED` (32) (1.26.60).
 - A session reports one close reason, the first. A later channel close or ABORT on the same session reports nothing (1.26.60).
 - When the application closes a session, as on a kick, the closing side reports `None` (code 0) at once, then closes the peer connection. That close sends the ABORT and close_notify below and reports nothing more (1.26.60). A server stop sends that ABORT on every session within 0.16 s (1.26.60).
-- After a malformed message BDS closes only the channel the message came on: a 0- or 1-byte message or a broken fragment countdown on the reliable channel, or a 0- or 1-byte message on the unreliable channel (`framing.md`). It starts a stream reset by itself only in these cases (1.26.60).
+- After a malformed message BDS closes the channel the message came on: a 0- or 1-byte message or a broken fragment countdown on the reliable channel, or a 0- or 1-byte message on the unreliable channel (`framing.md`). It starts a stream reset by itself only in these cases (1.26.60).
+- Closing either channel ends the whole session, with reason 0 because the self-started reset carries no error (1.26.60).
 - For the reliable channel BDS sends a stream reset request for that channel's stream only, answers our reset, then sends ABORT and close_notify, all within about 1 ms, and reports the player gone 14 ms after the message (1.26.60).
 - BDS closes a session, whether for a game-layer disconnect or a server stop, by sending an SCTP ABORT and then a DTLS close_notify in a separate datagram. It sends no SHUTDOWN, no stream reset and no signaling message first (1.26.60).
 - Otherwise BDS sends a stream reset only as the answer to ours: it answers with a success response and resets its own outgoing streams for each reset one, then sends ABORT and close_notify within a millisecond (1.26.60).
-- BDS treats a stream reset from the peer and an ABORT from the peer the same way, as a full close, and reports the player gone about 15 ms later. A peer that vanishes with no close is reported gone about 17 s later (1.26.60).
+- BDS treats a stream reset from the peer and an ABORT from the peer the same way, as a full close, and reports the player gone about 15 ms later. Both kinds of reset end the session. A peer that vanishes with no close is noticed when ICE connectivity fails, about 17 s later on BDS, and the session closes with `SessionError.ICE` (5). NetherNet has no idle timer (1.26.60).
+- This library notices a vanished peer when aioice's consent checks fail (RFC 7675, about 30 s), and then closes with reason 5.
 
 ## Candidates
 

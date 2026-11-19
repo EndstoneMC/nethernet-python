@@ -29,10 +29,10 @@ paths:
 ## Routing
 
 - Sessions are keyed by remote `NetworkID`, then by connection id, so two remotes may use the same connection id (1.26.60).
-- `CONNECTREQUEST`: the accept decision (Accept), then find or create the session for the sender and connection id. A new one becomes a listener session. An existing listener session is reused and the offer is not applied again. An existing dialer session with that id ignores it: nothing is sent, and `SessionError.INCOMING_CONNECTION_IGNORED` (16) is never produced (1.26.60).
-- `CONNECTRESPONSE`: the accept decision for every one, an unknown pair included, then the matching session. Accepted, a dialer applies it and a listener does nothing. One for an unknown pair is then dropped (1.26.60).
+- `CONNECTREQUEST`: the accept decision (Accept), then find or create the session for the sender and connection id. A new one becomes a listener session. An early session from a `CANDIDATEADD` has no direction yet, and the first `CONNECTREQUEST` attaches to it and applies the offer. A later one on a session that is already incoming is dropped, not applied again, and if the application declines it, it still gets the 37 reply and the session stays. A session that is outgoing ignores it: nothing is sent, and `SessionError.INCOMING_CONNECTION_IGNORED` (16) is never produced (1.26.60).
+- `CONNECTRESPONSE`: the accept decision for every one, an unknown pair included, then the matching session. Accepted, a dialer applies it and a listener does nothing. Declined, the matching session, a listener included, closes with 37. One for an unknown pair is ignored with no 37 (1.26.60).
 - `CONNECTERROR`: a dialer closes with the error it carries, whatever its value. A listener ignores every `CONNECTERROR`. One for an unknown pair is dropped (1.26.60).
-- `CANDIDATEADD`: find or create the session for the pair. For an unknown pair it creates a listener session early and defers the candidate, and the accepted offer later attaches to that session. The early session's trickle mode follows the candidate's channel. One whose offer never comes stays, since the sweep does not remove it (1.26.60). BDS keeps an early candidate over LAN and starts its checks toward it as soon as it answers. Without one BDS sends no checks until the dialer starts its own, and ICE still connects (1.26.60).
+- `CANDIDATEADD`: find or create the session for the pair. For an unknown pair it creates a listener session with no direction yet and defers the candidate, and the first accepted `CONNECTREQUEST` attaches to that session. The early session's trickle mode follows the candidate's channel. One whose offer never comes stays, since the sweep does not remove it (1.26.60). BDS keeps an early candidate over LAN and starts its checks toward it as soon as it answers. Without one BDS sends no checks until the dialer starts its own, and ICE still connects (1.26.60).
 - A message that does not parse (`signaling.md`) is dropped with no reply and no error (1.26.60).
 
 ## Accept
@@ -82,7 +82,7 @@ The close reasons (1.26.60):
 | the reported value | any | both | an HTTP send fails (Signaling channel) |
 
 - A failed negotiation step closes the session with its own code (`errors.md`) (1.26.60).
-- A session reports its close to the application once, with its `SessionError` and a JSON statistics summary, and closes its peer connection (1.26.60).
+- A session reports its close to the application once, with its `SessionError` and a JSON statistics summary (Statistics), and closes its peer connection (1.26.60).
 - An application close removes the session and reports 0. It returns false with no report when no session matches, so a second close of one session returns false (1.26.60).
 - The library reports that 0 as `None` (`errors.md`).
 - BDS sends `CONNECTERROR` only to decline an offer (Accept), never on close. It sent none over LAN on idle, a silently cut socket, the peer's close, a game-layer disconnect or `stop`, and `stop` closed every session within 0.16 s (1.26.60).
@@ -100,7 +100,12 @@ The close reasons (1.26.60):
 - A statistics snapshot is taken at most once a second. A rate is the counter's change divided by the whole seconds elapsed, an average rate is the running mean over all snapshots, and a maximum rate is the largest seen (1.26.60).
 - A candidate's type, network type, IP and URL are recorded when it is first seen and never updated. The IP is anonymized: IPv4 ends in `.0`, IPv6 keeps at most its first three groups followed by `::` (1.26.60).
 - A candidate pair's state list grows only when the state changes. `avgrtt` is the current RTT divided by the responses received, or the current RTT when none (1.26.60).
+- The summary is one JSON object. `startTime` and `endTime` are always present, strings as `YYYY-MM-DDTHH:MM:SS.mmmZ` in UTC. `errors` is always present, an array that may be empty. Every other member is omitted when empty or zero, never null (1.26.60).
+- `active` is a string, the selected pair's id. `local` and `remote` are objects keyed by candidate id, each holding `type`, `net`, `ip` and `url` strings, each omitted when empty. `pairs` is an object keyed by pair id (1.26.60).
+- An `errors` entry holds `time` (string), and, when set, `address` (string), `port` (int), `url` (string), `code` (int) and `message` (string) (1.26.60).
+- A pair holds `local`, `remote` (strings), `states` (array of strings), `bytesSent`, `packetsSent`, `bytesReceived`, `packetsReceived`, and for each of those four counters a rate, an average rate and a maximum rate (`bytesSentRate`, `avgBytesSentRate`, `maxBytesSentRate`, `packetsSentRate`, `bytesReceivedRate`, `packetsReceivedRate` and so on), the average a float and the others integers, and `rtt` and `avgrtt` as floats. Each is omitted when zero (1.26.60).
 - aiortc and aioice record no STUN round-trip time or response count, so this library reports `rtt`, `avgrtt` and `responses_received` as `None`.
+- This library keys candidates `L<n>` and `R<n>` in order of first sighting, and leaves `rtt` and `avgrtt` out of the JSON.
 
 ## LAN sessions
 

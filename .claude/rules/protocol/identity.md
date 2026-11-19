@@ -42,10 +42,10 @@ The envelope follows Mojang's public [NetherNet onboarding guide](https://github
 
 ## Player assertion
 
-- The client's `token` is the player's `GameServerToken`, unchanged. It signs `fingerprints` with the player's key (1.26.60).
+- The client's `token` is the player's server token, unchanged. It signs `fingerprints` with the player's key (1.26.60).
 - The client makes no assertion without a token and a key, and the negotiation fails with `SessionError.FAILED_TO_CREATE_IDENTITY_ASSERTION` (36) (1.26.60).
-- The client's `idp.domain` is the `iss` claim of the player's `GameServerToken`, or empty when that token does not parse or has no `iss`, as a self-signed token has none. The operator's `idp.domain` is the fixed string `self`. BDS does not check the offer's `idp.domain` (1.26.60).
-- `cpk` in the `GameServerToken` is a string public key. Base64 DER SubjectPublicKeyInfo is the form BDS accepts (1.26.60).
+- The client's `idp.domain` is the `iss` claim of the player's server token, or empty when that token does not parse or has no `iss`, as a self-signed token has none. The operator's `idp.domain` is the fixed string `self`. BDS does not check the offer's `idp.domain` (1.26.60).
+- `cpk` in the server token is a string public key. Base64 DER SubjectPublicKeyInfo is the form BDS accepts (1.26.60).
 - That key is P-256, P-384 or P-521, or RSA with a modulus of exactly 1024, 2048 or 4096 bits. A `cpk` that is not a JSON string reads as empty and fails (1.26.60).
 - The string `cpk` is standard base64 decoded as `Verification` describes, but only `+` and `/` are digits 62 and 63. A `-` or `_` ends it (1.26.60).
 - BDS accepts a self-signed player token with no Xbox chain, even with `online-mode=true` (1.26.60).

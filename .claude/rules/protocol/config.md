@@ -16,7 +16,7 @@ Configurable defaults. Every one stays configurable.
 | LAN discovery port | 7551 | UDP port, `u16` | both | none: fixed whatever `server-port` says | (1.26.60) |
 | Application id | `0xDEADBEEF`, 3735928559 | `u64` | both | none | (1.26.60) |
 | Broadcast interval | 2 | s | the peer with broadcast discovery on | none | (1.26.60) |
-| Broadcast discovery | off on a dedicated server | on or off | the peer that searches | none | (1.26.60) |
+| Broadcast discovery | off on a dedicated server and on a client hosting a world, on only while a client browses LAN games | on or off | the peer that searches | none | (1.26.60) |
 | Negotiation timeout | 10 | s | dialer only (`session.md`) | none | (1.26.60) |
 | HTTP signaling server | on for a dedicated server, off for a hosting client | on or off | listener | none: on with `transport=nethernet` | (1.26.60) |
 | HTTP signaling port | 19132 | TCP port | listener | `server-port` | (1.26.60) |
@@ -29,7 +29,7 @@ Configurable defaults. Every one stays configurable.
 | Port mappings | none | one `A:B` | listener | `server-port-mappings` | (1.26.60) |
 | Reflector reply IP | none: the request's source IP | IP address | listener | `server-public-ip` | (1.26.60) |
 
-- Negotiation timeout: a negative value counts as 0 (1.26.60).
+- Negotiation timeout: a negative value counts as 0. A timeout of 0 does not disable the timer: it fires at once and the next sweep closes a waiting dialer with 14 (1.26.60).
 - LAN visibility off stops discovery Responses (`lan-discovery.md`). LAN Messages and LAN signaling carry on, the discovery port stays bound, the `GET /v1/join` body is empty (`http-signaling.md`) and `POST /v1/join/{networkId}` still answers (1.26.60).
 - HTTP signaling bind address: `server-ip` sets the listener's address, in one address family only. Empty means dual-stack `[::]`. A bad address is handled as `http-signaling.md` says. The discovery socket ignores `server-ip` (1.26.60).
 - LAN signaling: a dedicated server turns it on when it creates the transport and never turns it off, whatever `server.properties` says (1.26.60).
