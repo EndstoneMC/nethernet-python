@@ -1,6 +1,7 @@
 """Identity assertion mechanics — Onboarding Guide s5 (envelope, canonical JSON, JWS, JWT)."""
 
 import base64
+import json
 
 import pytest
 from cryptography.hazmat.primitives.asymmetric import ec
@@ -8,10 +9,13 @@ from cryptography.hazmat.primitives.asymmetric import ec
 from nethernet.identity import (
     IdentitySigner,
     InvalidIdentity,
+    PlayerSigner,
+    _sign_jwt,
     build_envelope,
     cpk_digest,
     decode_cpk,
     encode_cpk,
+    encode_jwk,
     extract_identity,
     fingerprint_payload,
     generate_operator_key,
@@ -112,6 +116,7 @@ def test_cpk_roundtrip():
 def test_decode_cpk_jwk_roundtrip(curve, scalar):
     # These keys cover leading-zero coordinates on each supported curve.
     public_key = ec.derive_private_key(scalar, curve).public_key()
+    assert encode_jwk(public_key) == public_jwk(public_key)
     decoded = decode_cpk(public_jwk(public_key))
     assert decoded.public_numbers() == public_key.public_numbers()
     assert cpk_digest(decoded) == cpk_digest(decode_cpk(encode_cpk(public_key)))
@@ -186,23 +191,17 @@ def test_extract_identity_rejects_malformed_envelope():
         extract_identity(insert_identity(SDP, "bm90IGpzb24="))  # base64("not json")
 
 
-@pytest.mark.parametrize("form", ["der", "jwk"])
-def test_signer_and_verify_server_identity_roundtrip(form):
+def test_signer_and_verify_server_identity_roundtrip():
     key = generate_operator_key()
-    cpk = encode_cpk(key.public_key())
-    claims = {"iss": "unit-test"}
-    if form == "jwk":
-        cpk = public_jwk(key.public_key())
-        claims["cpk"] = cpk
-    signer = IdentitySigner(key, domain="partner.example", claims=claims)
-    signed = signer.sign(SDP)
+    signed = IdentitySigner(key).sign(SDP)
     assert "a=identity:" in signed
 
     stripped, identity = verify_server_identity(signed)
     assert stripped == SDP
-    assert identity.domain == "partner.example"
-    assert identity.claims["iss"] == "unit-test"
-    assert identity.claims["cpk"] == cpk
+    assert identity.domain == "self"
+    assert set(identity.claims) == {"cpk", "exp", "iat"}
+    assert identity.claims["cpk"] == public_jwk(key.public_key())
+    assert identity.claims["exp"] == identity.claims["iat"] + 60
     assert identity.public_key.public_numbers() == key.public_key().public_numbers()
     assert identity.key_digest == cpk_digest(key.public_key())
 
@@ -212,25 +211,48 @@ def test_signer_and_verify_server_identity_roundtrip(form):
     assert envelope.fingerprints.count(".") == 2
 
 
+def test_signer_writes_the_operator_token():
+    key = generate_operator_key()
+    _, envelope = extract_identity(IdentitySigner(key).sign(SDP))
+    header, payload, _ = (
+        base64.urlsafe_b64decode(part + "=" * (-len(part) % 4))
+        for part in envelope.token.split(".")
+    )
+    expected = {"alg": "ES384", "x5u": encode_cpk(key.public_key())}
+    assert header == json.dumps(expected, separators=(",", ":")).encode() + b"\n"
+    claims = json.loads(payload)
+    assert claims["cpk"] == encode_jwk(key.public_key())
+    assert payload == json.dumps(claims, sort_keys=True, separators=(",", ":")).encode() + b"\n"
+
+
 def test_verify_server_identity_requires_assertion():
     with pytest.raises(InvalidIdentity):
         verify_server_identity(SDP)
 
 
+def test_player_signer_writes_a_der_cpk():
+    key = generate_operator_key()
+    signed = PlayerSigner(key, domain="partner.example").sign(SDP)
+    stripped, envelope = extract_identity(signed)
+    assert stripped == SDP
+    assert envelope.domain == "partner.example"
+    payload = envelope.token.split(".")[1]
+    claims = json.loads(base64.urlsafe_b64decode(payload + "=" * (-len(payload) % 4)))
+    assert claims["cpk"] == encode_cpk(key.public_key())
+    verify_fingerprints(SDP, envelope.fingerprints, decode_cpk(claims["cpk"]))
+
+
 def test_verify_server_identity_rejects_expired_token():
-    signer = IdentitySigner(generate_operator_key(), domain="x", token_lifetime=-10)
+    signer = PlayerSigner(generate_operator_key(), domain="x", token_lifetime=-10)
     with pytest.raises(InvalidIdentity, match="server identity token expired"):
         verify_server_identity(signer.sign(SDP))
 
 
-@pytest.mark.parametrize("form", ["der", "jwk"])
-def test_verify_server_identity_rejects_resigned_fingerprints(form):
+def test_verify_server_identity_rejects_resigned_fingerprints():
     # An attacker swapping the fingerprints for ones signed by a different key must fail:
     # the JWS no longer verifies under the token's cpk.
     key = generate_operator_key()
-    claims = {"cpk": public_jwk(key.public_key())} if form == "jwk" else None
-    operator = IdentitySigner(key, domain="x", claims=claims)
-    signed = operator.sign(SDP)
+    signed = IdentitySigner(key).sign(SDP)
     _, envelope = extract_identity(signed)
     attacker_jws = sign_fingerprints(SDP.replace("4A:AD", "FF:FF"), generate_operator_key())
     forged = insert_identity(
@@ -242,10 +264,8 @@ def test_verify_server_identity_rejects_resigned_fingerprints(form):
 
 
 def test_verify_server_identity_rejects_wrong_claimed_jwk():
-    signer = IdentitySigner(
-        generate_operator_key(),
-        domain="x",
-        claims={"cpk": public_jwk(generate_operator_key().public_key())},
-    )
+    key = generate_operator_key()
+    claims = {"cpk": public_jwk(generate_operator_key().public_key()), "exp": 60, "iat": 0}
+    envelope = build_envelope("self", _sign_jwt(claims, key), sign_fingerprints(SDP, key))
     with pytest.raises(InvalidIdentity, match="JWT self-signature verification failed"):
-        verify_server_identity(signer.sign(SDP))
+        verify_server_identity(insert_identity(SDP, envelope))

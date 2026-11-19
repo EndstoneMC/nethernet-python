@@ -38,7 +38,7 @@ async def test_http_loopback_echo():
 
 async def test_http_identity_end_to_end():
     key = generate_operator_key()
-    signer = IdentitySigner(key, domain="partner.example", claims={"iss": "loopback"})
+    signer = IdentitySigner(key)
     seen = []
 
     async with nethernet.serve_http(
@@ -51,8 +51,7 @@ async def test_http_identity_end_to_end():
             assert await conn.recv() == b"ping"
 
     (identity,) = seen
-    assert identity.domain == "partner.example"
-    assert identity.claims["iss"] == "loopback"
+    assert identity.domain == "self"
     assert identity.key_digest == cpk_digest(key.public_key())
 
 

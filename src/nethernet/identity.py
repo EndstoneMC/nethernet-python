@@ -5,8 +5,7 @@ the detached JWS over it, and the self-signed server JWT carrying ``cpk``. Polic
 a GameServerToken against the auth service, authorization decisions, TOFU pin storage — stays
 with the application.
 
-The ``cpk`` claim accepts public EC JWK objects and base64 DER SubjectPublicKeyInfo strings.
-The signer emits DER strings by default.
+The operator's ``cpk`` claim is a public EC JWK. A player's is base64 DER SubjectPublicKeyInfo.
 
 cryptography API verified against the official reference:
 https://cryptography.io/en/latest/hazmat/primitives/asymmetric/ec/
@@ -42,6 +41,8 @@ _ALGORITHMS: dict[str, tuple[type[ec.EllipticCurve], type[hashes.HashAlgorithm],
     "ES512": (ec.SECP521R1, hashes.SHA512, 66),
 }
 _JWK_CURVES = {"P-256": "ES256", "P-384": "ES384", "P-521": "ES512"}
+OPERATOR_DOMAIN = "self"
+OPERATOR_TOKEN_LIFETIME = 60
 
 
 def generate_operator_key() -> ec.EllipticCurvePrivateKey:
@@ -150,6 +151,20 @@ def encode_cpk(public_key: ec.EllipticCurvePublicKey) -> str:
         serialization.Encoding.DER, serialization.PublicFormat.SubjectPublicKeyInfo
     )
     return base64.b64encode(der).decode()
+
+
+def encode_jwk(public_key: ec.EllipticCurvePublicKey) -> dict[str, str]:
+    """Public EC JWK — the operator's ``cpk`` claim value."""
+    alg = _alg_for_key(public_key)
+    _, _, size = _ALGORITHMS[alg]
+    crv = next(name for name, value in _JWK_CURVES.items() if value == alg)
+    numbers = public_key.public_numbers()
+    return {
+        "crv": crv,
+        "kty": "EC",
+        "x": _b64url(numbers.x.to_bytes(size, "big")),
+        "y": _b64url(numbers.y.to_bytes(size, "big")),
+    }
 
 
 def _decode_ec_jwk(jwk: dict) -> ec.EllipticCurvePublicKey:
@@ -308,6 +323,35 @@ class IdentitySigner:
     ``cpk`` — reuse one keypair across a fleet and treat rotation as a deliberate event.
     """
 
+    def __init__(self, private_key: ec.EllipticCurvePrivateKey) -> None:
+        _alg_for_key(private_key)  # fail fast on unsupported curves
+        self._private_key = private_key
+
+    def _token(self) -> str:
+        public_key = self._private_key.public_key()
+        alg = _alg_for_key(public_key)
+        now = int(time.time())
+        claims = {"cpk": encode_jwk(public_key), "exp": now + OPERATOR_TOKEN_LIFETIME, "iat": now}
+        header = _b64url(_canonical_json({"alg": alg, "x5u": encode_cpk(public_key)}) + b"\n")
+        payload = _b64url(_canonical_json(claims) + b"\n")
+        signature = _sign_raw(self._private_key, alg, f"{header}.{payload}".encode())
+        return f"{header}.{payload}.{_b64url(signature)}"
+
+    def sign(self, sdp: str) -> str:
+        """Return ``sdp`` with the server assertion inserted."""
+        envelope = build_envelope(
+            OPERATOR_DOMAIN, self._token(), sign_fingerprints(sdp, self._private_key)
+        )
+        return insert_identity(sdp, envelope)
+
+
+class PlayerSigner:
+    """Produces the player ``a=identity`` for SDP offers.
+
+    :meth:`sign` self-signs a JWT carrying the player's key as a DER ``cpk`` claim, signs the
+    offer's fingerprints with the same key, and inserts the envelope.
+    """
+
     def __init__(
         self,
         private_key: ec.EllipticCurvePrivateKey,
@@ -330,7 +374,7 @@ class IdentitySigner:
         return _sign_jwt(claims, self._private_key)
 
     def sign(self, sdp: str) -> str:
-        """Return ``sdp`` with the server assertion inserted."""
+        """Return ``sdp`` with the player assertion inserted."""
         envelope = build_envelope(
             self._domain, self._token(), sign_fingerprints(sdp, self._private_key)
         )

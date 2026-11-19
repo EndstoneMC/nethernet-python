@@ -89,7 +89,7 @@ from nethernet import IdentitySigner, generate_operator_key
 key = generate_operator_key()               # long-lived; share one across a fleet
 async with nethernet.serve_http(
     handle, port=8080,
-    identity_signer=IdentitySigner(key, domain="partner.example"),
+    identity_signer=IdentitySigner(key),
 ) as server:
     await server.serve_forever()
 ```
