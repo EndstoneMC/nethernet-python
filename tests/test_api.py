@@ -129,9 +129,12 @@ async def test_http_connect_without_a_signer_uses_a_self_signed_player():
             assert await conn.recv() == b"ping"
 
 
-async def test_validate_offer_rejection_is_refused_with_identity_not_allowed():
+async def test_validate_offer_returning_false_is_refused_with_identity_not_allowed():
+    offers = []
+
     def refuse(offer):
-        raise ValueError("no")
+        offers.append(offer)
+        return False
 
     async with local_server(idle, validate_offer=refuse) as server:
         with pytest.raises(ConnectionFailed) as exc:
@@ -139,6 +142,70 @@ async def test_validate_offer_rejection_is_refused_with_identity_not_allowed():
                 f"http://{LOOPBACK}:{server.bound_port}", identity_signer=player(), timeout=20
             )
     assert exc.value.error is SessionError.IDENTITY_NOT_ALLOWED
+    assert len(offers) == 1
+
+
+async def test_validate_offer_raising_drops_the_offer_with_no_reply():
+    served = []
+
+    def explode(offer):
+        raise ValueError("boom")
+
+    async def handler(conn):
+        served.append(conn)
+
+    async with local_server(handler, validate_offer=explode) as server:
+        with pytest.raises(ConnectionFailed) as exc:
+            await connect(
+                f"http://{LOOPBACK}:{server.bound_port}",
+                identity_signer=player(),
+                negotiation_timeout=1,
+                timeout=20,
+            )
+    assert exc.value.error is SessionError.NEGOTIATION_TIMEOUT_WAITING_FOR_RESPONSE
+    assert served == []
+
+
+async def test_serve_signs_its_answers_with_a_generated_operator_key_by_default():
+    pins = []
+    for _ in range(2):
+        async with local_server(idle) as server:
+            seen = []
+            async with connect(
+                f"http://{LOOPBACK}:{server.bound_port}", on_server_identity=seen.append, timeout=20
+            ):
+                pass
+            assert seen[0].domain == "self"
+            assert seen[0].claims["cpk"]["crv"] == "P-384"
+            pins.append(seen[0].key_pin)
+    assert pins[0] != pins[1]
+
+
+async def test_serve_with_a_lan_port_in_use_raises():
+    async with local_server(idle) as first:
+        with pytest.raises(OSError):
+            await serve(idle, host=LOOPBACK, port=0, lan_host=LOOPBACK, lan_port=first.lan_port)
+
+
+async def test_peer_stream_reset_closes_the_other_end_with_no_error():
+    closed = asyncio.Event()
+    seen = []
+
+    async def watch(conn):
+        await conn.send(await conn.recv())
+        with pytest.raises(ConnectionClosed) as exc:
+            await conn.recv()
+        seen.append(exc.value.error)
+        closed.set()
+
+    async with local_server(watch) as server:
+        conn = await connect(f"{LOOPBACK}:{server.bound_port}", timeout=20)
+        await conn.send(b"hello")
+        assert await conn.recv() == b"hello"
+        conn._session.peer_connection._reliable.channel.close()
+        await asyncio.wait_for(closed.wait(), 5)
+        await conn.close()
+    assert seen == [None]
 
 
 async def test_on_server_identity_raising_closes_the_connection():
@@ -306,7 +373,9 @@ async def test_serve_with_an_unparseable_lan_host_raises():
         await serve(idle, host=LOOPBACK, port=0, lan_host="bogus", lan_port=0)
 
 
-async def test_connect_times_out_when_the_lan_host_is_not_found():
+async def test_connect_lan_lookup_gives_up_after_the_connect_timeout():
+    loop = asyncio.get_running_loop()
+    start = loop.time()
     with pytest.raises(TimeoutError):
         await connect(
             nethernet.NetworkID.p2p(1),
@@ -315,7 +384,24 @@ async def test_connect_times_out_when_the_lan_host_is_not_found():
             broadcast_host=LOOPBACK,
             broadcast_port=9,
             timeout=0.5,
+            negotiation_timeout=30,
         )
+    assert loop.time() - start < 5
+
+
+async def test_connect_lan_lookup_falls_back_to_the_negotiation_timeout():
+    loop = asyncio.get_running_loop()
+    start = loop.time()
+    with pytest.raises(TimeoutError):
+        await connect(
+            nethernet.NetworkID.p2p(1),
+            bind_host=LOOPBACK,
+            port=0,
+            broadcast_host=LOOPBACK,
+            broadcast_port=9,
+            negotiation_timeout=0.5,
+        )
+    assert loop.time() - start < 5
 
 
 class GarbageSigner:

@@ -869,6 +869,22 @@ async def test_a_failed_request_fails_the_dial_with_signaling_failed_to_send():
     await recorder.server.wait_closed()
     with pytest.raises(ConnectionFailed) as info:
         await request_answer(
-            f"http://127.0.0.1:{port}", 123, f"CONNECTREQUEST 7 {OFFER}", timeout=2
+            f"http://127.0.0.1:{port}", 123, f"CONNECTREQUEST 7 {OFFER}", timeout=10
         )
     assert info.value.error == SessionError.SIGNALING_FAILED_TO_SEND
+
+
+async def test_a_post_that_times_out_fails_the_dial_with_the_negotiation_timeout():
+    async def silent(reader, writer):
+        await asyncio.sleep(5)
+
+    server = await asyncio.start_server(silent, "127.0.0.1", 0)
+    port = server.sockets[0].getsockname()[1]
+    try:
+        with pytest.raises(ConnectionFailed) as info:
+            await request_answer(
+                f"http://127.0.0.1:{port}", 123, f"CONNECTREQUEST 7 {OFFER}", timeout=0.5
+            )
+    finally:
+        server.close()
+    assert info.value.error == SessionError.NEGOTIATION_TIMEOUT_WAITING_FOR_RESPONSE

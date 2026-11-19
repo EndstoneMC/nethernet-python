@@ -31,6 +31,7 @@ class Transport:
         application_id: The LAN discovery application id.
         lan_host: The LAN socket bind address, empty for dual stack.
         lan_port: The LAN discovery and signaling UDP port.
+        lan_fallback: Whether a port in use falls back to an ephemeral port.
         broadcast_host: The limited broadcast address for discovery requests.
         broadcast_port: The port discovery requests go to, ``lan_port`` when None.
         broadcast_interval: Seconds between broadcast discovery requests.
@@ -61,6 +62,7 @@ class Transport:
         lan: bool = True,
         lan_host: str = "",
         lan_port: int = DEFAULT_BROADCAST_PORT,
+        lan_fallback: bool = True,
         broadcast_host: str = LIMITED_BROADCAST,
         broadcast_port: int | None = None,
         broadcast_interval: float = DEFAULT_BROADCAST_INTERVAL,
@@ -90,6 +92,7 @@ class Transport:
             local_id=local_id.value,
             application_id=application_id,
             port=lan_port,
+            fallback=lan_fallback,
             bind_host=lan_host,
             broadcast_host=broadcast_host,
             broadcast_port=broadcast_port,

@@ -29,6 +29,7 @@ from nethernet.errors import (
 from nethernet.identity import (
     IdentityEnvelope,
     IdentitySigner,
+    InvalidIdentity,
     PlayerSigner,
     ServerIdentity,
     extract_identity,
@@ -165,7 +166,8 @@ class Connection:
     """One connection to a peer, the same class on both ends.
 
     Use it as an async context manager to close it on exit, and iterate it to receive packets
-    until this end closes. A peer's close raises ``ConnectionClosed`` with ``DATA_CHANNEL_CLOSED``.
+    until this end closes. A peer's ABORT raises ``ConnectionClosed`` with ``DATA_CHANNEL_CLOSED``
+    and its stream reset one with no error.
 
     Args:
         session: The session this connection wraps.
@@ -240,14 +242,9 @@ class Connection:
                 raise StopAsyncIteration from None
             raise
 
-    async def close(self, error: SessionError | None = None) -> None:
-        """Close the connection.
-
-        Args:
-            error: The reason reported to this end only, the peer is not told. ``None`` is a clean
-                close.
-        """
-        self._session.close(error)
+    async def close(self) -> None:
+        """Close the connection."""
+        self._session.close()
         await self._session.wait_closed()
         if self._owner is not None:
             await self._owner.aclose()
@@ -510,7 +507,7 @@ def serve(
     negotiation_timeout: float = DEFAULT_NEGOTIATION_TIMEOUT,
     flags: ConnectionFlags = ConnectionFlags.NONE,
     identity_signer: IdentitySigner | None = None,
-    validate_offer: Callable[[IncomingOffer], Awaitable[None] | None] | None = None,
+    validate_offer: Callable[[IncomingOffer], Awaitable[bool] | bool] | None = None,
 ) -> _Opening[Server]:
     """Start a host that serves HTTP signaling and LAN signaling together.
 
@@ -541,13 +538,14 @@ def serve(
         negotiation_timeout: Seconds a session waits for its peer.
         flags: Connection flags applied to every remote.
         identity_signer: Signs each HTTP answer, a fresh operator key when None.
-        validate_offer: Called for each HTTP offer once its identity verifies, raise to refuse it.
+        validate_offer: Called for each HTTP offer once its identity verifies. False refuses it
+            with ``IDENTITY_NOT_ALLOWED``, and a raise drops it with no reply.
 
     Returns:
         An awaitable that resolves to the running ``Server``.
 
     Raises:
-        OSError: The bind address cannot be bound.
+        OSError: The bind address or ``lan_port`` cannot be bound.
         socket.gaierror: The bind address does not parse.
     """
     signer = identity_signer or IdentitySigner(generate_operator_key())
@@ -557,15 +555,16 @@ def serve(
             return True
         try:
             verify_player_identity(request.sdp)
-            if validate_offer is not None:
-                stripped, envelope = extract_identity(request.sdp)
-                sender = request.remote_id
-                result = validate_offer(IncomingOffer(str(sender), sender, stripped, envelope))
-                if inspect.isawaitable(result):
-                    await result
-        except Exception:
+        except InvalidIdentity:
             return False
-        return True
+        if validate_offer is None:
+            return True
+        stripped, envelope = extract_identity(request.sdp)
+        sender = request.remote_id
+        result = validate_offer(IncomingOffer(str(sender), sender, stripped, envelope))
+        if inspect.isawaitable(result):
+            result = await result
+        return bool(result)
 
     server = Server(
         handler,
@@ -585,6 +584,7 @@ def serve(
         application_id=application_id,
         lan_host=lan_host,
         lan_port=lan_port,
+        lan_fallback=False,
         broadcast_host=broadcast_host,
         broadcast_port=broadcast_port,
         http_host=host,

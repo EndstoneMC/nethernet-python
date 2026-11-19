@@ -242,7 +242,9 @@ async def request_answer(
         ):
             status = response.status
             body = await response.read()
-    except (aiohttp.ClientError, OSError, TimeoutError):
+    except TimeoutError:
+        raise ConnectionFailed(SessionError.NEGOTIATION_TIMEOUT_WAITING_FOR_RESPONSE) from None
+    except (aiohttp.ClientError, OSError):
         raise ConnectionFailed(SessionError.SIGNALING_FAILED_TO_SEND) from None
     if status // 100 != 2:
         raise ConnectionFailed(_STATUS_ERRORS.get(status, SessionError.SIGNALING_FAILED_TO_SEND))

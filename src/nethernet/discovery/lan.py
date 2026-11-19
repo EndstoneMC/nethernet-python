@@ -160,6 +160,7 @@ class LanTransport(asyncio.DatagramProtocol):
         local_id: int,
         application_id: int = DEFAULT_APPLICATION_ID,
         port: int = DEFAULT_BROADCAST_PORT,
+        fallback: bool = True,
         bind_host: str = "",
         broadcast_host: str = LIMITED_BROADCAST,
         broadcast_port: int | None = None,
@@ -174,6 +175,7 @@ class LanTransport(asyncio.DatagramProtocol):
         self._local_id = local_id
         self._envelope = Envelope(application_id)
         self._port = port
+        self._fallback = fallback
         self._bind_host = bind_host
         self._limited_broadcast = broadcast_host
         self._request_port = port if broadcast_port is None else broadcast_port
@@ -322,7 +324,7 @@ class LanTransport(asyncio.DatagramProtocol):
         try:
             return self._bind(self._port)
         except OSError as exc:
-            if not _in_use(exc):
+            if not self._fallback or not _in_use(exc):
                 raise
         return self._bind(0)
 
