@@ -1,12 +1,12 @@
 [project]
-name = "nethernet"
-version = "0.0.1"
-description = "Cleanroom Python implementation of Minecraft Bedrock's NetherNet P2P/LAN transport, built on aiortc."
+name = "nethernet-python"
+version = "0.1.0"
+description = "A Python implementation of the NetherNet transport."
 readme = "README.md"
 requires-python = ">=3.11"
 license = { text = "MIT" }
 license-files = ["LICENSE"]
-keywords = ["nethernet", "minecraft", "bedrock", "webrtc", "p2p", "lan", "aiortc"]
+keywords = ["nethernet", "minecraft", "bedrock", "webrtc", "aiortc"]
 classifiers = [
     "Development Status :: 3 - Alpha",
     "License :: OSI Approved :: MIT License",
@@ -16,21 +16,18 @@ classifiers = [
     "Topic :: System :: Networking",
 ]
 dependencies = [
-    # WebRTC engine (ICE + DTLS + SCTP data channels). See SPEC.md s6.
+    "aiohttp>=3.9",
     "aiortc>=1.9",
-    # AES-256-ECB + PKCS7 for the LAN discovery envelope. See SPEC.md s8.
     "cryptography>=42",
+    "ifaddr>=0.2",
 ]
 
 [project.optional-dependencies]
-# HTTP signaling channel (Onboarding Guide s4): serve_http() / connect_http().
-http = ["aiohttp>=3.9"]
 dev = [
-    "aiohttp>=3.9",
     "pytest>=8",
     "pytest-asyncio>=0.24",
     "pytest-xdist>=3",
-    "ruff>=0.6",
+    "ruff==0.15.17",
 ]
 
 [build-system]
@@ -41,17 +38,16 @@ build-backend = "hatchling.build"
 packages = ["src/nethernet"]
 
 [tool.pytest.ini_options]
-# aiortc is asyncio-based; auto mode lets async test functions run without per-test markers.
 asyncio_mode = "auto"
 testpaths = ["tests"]
-# Run in parallel (pytest-xdist): the aiortc handshake tests are I/O-bound, so this is a big win.
+cache_dir = ".cache/pytest"
 addopts = "-n auto"
 markers = ["conformance: SPEC.md s11 conformance / differential byte-vector fixtures"]
 
 [tool.ruff]
 line-length = 100
 target-version = "py311"
+cache-dir = ".cache/ruff"
 
 [tool.ruff.lint]
-# E/W pycodestyle, F pyflakes, I import sorting, N pep8-naming, UP pyupgrade, B bugbear.
 select = ["E", "W", "F", "I", "N", "UP", "B"]
