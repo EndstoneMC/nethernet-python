@@ -10,173 +10,32 @@ paths:
 
 # LAN discovery
 
-LAN peers find each other and exchange signaling over UDP with no server. `lan-crypto.md` seals every datagram, so both peers need the same application id. `config.md` holds the discovery port, the broadcast interval and the application id.
+- Socket: SPEC §7.1
+- Base header, Request, Response: SPEC §7.2 to §7.4
+- Host advertisement: SPEC §7.5
+- Message: SPEC §7.6
+- Receive: SPEC §7.7
+- Peer table and manual hosts: SPEC §7.8
+- First-discovery probe: SPEC §7.9
+- Broadcast discovery and broadcast addresses: SPEC §7.10
+- Suspend and resume: SPEC §7.11
 
 ## Socket
 
-- One UDP socket per LAN endpoint, IPv6 and dual stack: `IPV6_V6ONLY` 0, `SO_BROADCAST` 1, `SO_RCVBUF` 32768, bound to `[::]` on the discovery port (1.26.60).
-- After the bind it joins `ff02::1` on interface index 0 and sets `IPV6_MULTICAST_LOOP` 0. A failure of either option, or of `SO_RCVBUF`, is ignored (1.26.60).
-- When the IPv6 socket cannot be created, configured or bound for any reason but the port being in use, fall back to an IPv4 socket: `SO_BROADCAST` 1, `SO_RCVBUF` 32768, bound to `0.0.0.0` on the same port, with no multicast group (1.26.60).
-- When the port is in use, retry the whole sequence once on port 0, an ephemeral port. An in-use port on the IPv6 bind skips the IPv4 fallback (1.26.60).
 - This library's `serve` raises when `lan_port` is in use and does not retry on port 0 (`api.md`).
-- `SO_REUSEADDR` is not set, so a second endpoint on the same host lands on an ephemeral port (1.26.60).
-- Any other failure, or a failed retry, leaves the endpoint with no socket. It sends and receives nothing until the socket is rebuilt (1.26.60).
-- On the dual-stack socket an IPv4 destination goes out as its IPv4-mapped address `::ffff:a.b.c.d`. On the IPv4 socket an IPv6 destination fails with address family not supported (1.26.60).
-- A send that fails with a broken pipe error drops the socket and builds a new one as above, trying the discovery port first (1.26.60).
-- Peers learn an endpoint's real port from the UDP source address. Requests always go to the discovery port, so an endpoint on an ephemeral port gets Responses and Messages but no Requests (1.26.60).
-- BDS binds `[::]` on the discovery port at startup, exclusively: another process cannot bind it, even with `SO_REUSEADDR` (1.26.60).
-- BDS binds it, and processes Messages and Responses, whatever `enable-lan-visibility` says (`config.md`) (1.26.60).
-- An idle BDS sends no Requests: a listener on `0.0.0.0` on the discovery port saw no datagram in 30 s (1.26.60).
 - This library hands one `socket.AF_INET6` socket, or the IPv4 fallback, to `create_datagram_endpoint(sock=...)`.
-
-## Base header
-
-Every packet starts with this packed header, 20 bytes, no padding, all integers little-endian (1.26.60):
-
-| Offset | Size | Field |
-| ---: | ---: | --- |
-| 0 | 2 | packet length (`u16`): header size plus payload size |
-| 2 | 2 | packet type (`u16`): 0 Request, 1 Response, 2 Message |
-| 4 | 8 | sender id (`u64`): the sender's P2P `NetworkID` |
-| 12 | 8 | padding: zero on send, ignored on receive |
-
-- sender id sits at offset 4, unaligned. A naturally aligned layout is wrong on the wire (1.26.60).
-
-## Request
-
-- Type 0: the base header alone, packet length 20, sender id set to the id enabled for broadcast discovery (1.26.60).
-
-## Response
-
-Type 1, a 24-byte header (1.26.60):
-
-| Offset | Size | Field |
-| ---: | ---: | --- |
-| 0 | 20 | base header |
-| 20 | 4 | application data length (`u32`) |
-| 24 | ... | application data |
-
-- With N bytes of application data, the application data length is min(N, 1148) and the packet length is 24 plus that. The datagram still carries all N bytes (1.26.60).
-- The application data is the application's host advertisement, fetched again for each Request (1.26.60). BDS sends the record in Host advertisement.
 
 ## Host advertisement
 
-BDS's application data is the lowercase hex text of this binary record, so application data length is twice the record size (1.26.60):
-
-| # | Field | Encoding | BDS value |
-| ---: | --- | --- | --- |
-| 1 | `dataVersion` | `u8` | 7 |
-| 2 | `name` | varint length, UTF-8 | the server name |
-| 3 | `protocol` | zigzag varint | 2225, hardcoded |
-| 4 | `version` | varint length, text | `1.26.60` |
-| 5 | `level` | varint length, text | the level name |
-| 6 | `players` | zigzag varint | players online |
-| 7 | `maxPlayers` | zigzag varint | the player limit |
-| 8 | `gameType` | zigzag varint | the level's game type |
-| 9 | `editor` | bool, 1 byte | editor world |
-| 10 | `hardcore` | bool, 1 byte | hardcore world |
-| 11 | `onlineAuth` | bool, 1 byte | online authentication on |
-| 12 | `selfSignedAuth` | bool, 1 byte | self-signed authentication on |
-| 13 | `nonce` | varint length, text | see below |
-| 14 | `connection` | zigzag varint | 4 or 7 |
-
-- The nonce is a random `u64` in lowercase hex with no zero padding. It is new at every restart (1.26.60).
-- The nonce is checked only when the advertisement updates: at startup, when a player joins or leaves, and when the player limit changes. An update more than 300 s of monotonic time after the nonce was drawn draws a new one. An idle host keeps its nonce (1.26.60).
-- `connection` is a connection-type value, not the transport: -1 undefined, 0 local, 1 IPv4, 2 IPv6, 3 plain WebSocket signaling, 4 LAN WebRTC signaling, 5 NAT, 6 UPnP, 7 JSON-RPC WebSocket signaling, 8 unknown IP (1.26.60).
-- BDS sends 7 only while its link to the online signaling service is up, and 4 otherwise. A host without that link, such as a LAN or HTTP-only host, sends 4 (1.26.60).
-- A receiving client decodes the hex case-insensitively and validates no character. An odd-length text fails at the first byte and drops the record (1.26.60).
-- A receiver ignores bytes after the last field. A bool is any non-zero byte. A varint is at most 5 bytes, zero-padded forms such as `80 00` are accepted, bits above 31 are dropped, a sixth byte fails, and a zigzag varint decodes on 32 bits (1.26.60).
-- This library drops a record whose hex holds a non-hex character.
-- The client never checks `dataVersion`. It parses every value with the same 14 fields and drops only bytes that fail to parse (1.26.60).
+- This library reads a record as the release client does, except that it drops non-hex text.
 - This library has no online signaling link, so it advertises 4.
-- A stock BDS record is 67 bytes, 134 hex characters (1.26.60).
-- Under every config BDS advertises `dataVersion` 7, `protocol` 2225, `version` `1.26.60`, 0 players, 10 `maxPlayers`, `gameType` 0, `editor` 0, `hardcore` 0 and `connection` 4. `onlineAuth` is always 1. `selfSignedAuth` is 0 with `online-mode=true`, the shipped default, and 1 with `online-mode=false` (1.26.60).
 - This library's `serve` accepts self-signed player tokens, so it advertises `onlineAuth` 1 and `selfSignedAuth` 1, as BDS does with `online-mode=false`.
-
-## Message
-
-Type 2, a 32-byte header (1.26.60):
-
-| Offset | Size | Field |
-| ---: | ---: | --- |
-| 0 | 20 | base header |
-| 20 | 8 | recipient id (`u64`): the addressee's P2P `NetworkID` |
-| 28 | 4 | message data length (`u32`) |
-| 32 | ... | message data |
-
-- With N bytes of message data, the message data length is min(N, 1140) and the packet length is 32 plus that. The datagram still carries all N bytes (1.26.60).
-- 1140 caps only the length fields, not the data. A message over 1140 bytes, such as a full SDP, goes out whole in one datagram, and a receiver sizes it from the datagram. BDS accepts an 1870-byte offer whose header says 1140 (1.26.60).
-- The message data is one signaling message string (`signaling.md`) (1.26.60).
-
-## Receive
-
-- Open every datagram (`lan-crypto.md`) before parsing (1.26.60).
-- Drop a datagram under 4 bytes, then one shorter than its packet length, then one with an unknown packet type, then one shorter than its type's header: 20, 24 or 32 bytes (1.26.60).
-- A datagram longer than its packet length is accepted (1.26.60).
-- The payload runs from the end of the header to the end of the datagram. The application data length and message data length are ignored, and an empty payload is valid (1.26.60).
-- Ignore a Request whose sender id is the local id, and deliver no Response whose sender id is the local id. A Request with sender id 0 is answered (1.26.60).
-- A Message is never filtered on sender id. One from the local id updates the peer table and gets the probe like any other (1.26.60).
-- Request: reply with a Response with sender id set to the local id and the application's advertisement, unicast to the Request's source address and port. A Request is answered whether or not the endpoint broadcasts Requests itself, and a failed reply is ignored (1.26.60).
-- BDS answers a Request sent to loopback, `255.255.255.255`, a directed broadcast, its unicast address or `[::1]` with one unicast Response from the discovery port. A stock BDS Response is 158 bytes (1.26.60).
-- Response: deliver the sender id and the application data to the application as a discovered host (1.26.60).
-- A Response or Message with a non-zero sender id updates the peer table and sends any probe first. A Request never does (1.26.60).
-- Then a Message with recipient id equal to the local id feeds its data to signaling as a LAN message from sender id. One addressed to another id is dropped, after its sender was recorded (1.26.60).
-- BDS answers a LAN offer with one Message holding `CONNECTRESPONSE`: candidates inline in the SDP, no `CANDIDATEADD`, no `a=identity`, `a=setup:active` (`session.md`) (1.26.60).
 
 ## Broadcast discovery
 
-- A client hosting a world does not broadcast Requests. It answers Requests with its advertisement, and only while the world is LAN-visible (1.26.60).
 - A client sends Requests only while it browses for LAN games, on this discovery port. The same browse also starts the RakNet LAN ping on 19132 and 19133, which is not NetherNet (1.26.60).
 - This library's `serve` answers Requests and does not broadcast, and `discover` broadcasts while it runs.
-- The application enables broadcast discovery per local id and disables it per id. Enabling an id twice does nothing (1.26.60).
-- Enabling the first id runs a tick at once. Each tick re-arms itself one broadcast interval after it ends, with no backoff or jitter (1.26.60).
-- Disabling every id and enabling one again before the pending tick runs starts a second tick chain, so Requests go out twice per interval (1.26.60).
-
-Each tick, in order (1.26.60):
-
-1. With no id enabled, clear the broadcast addresses and stop. The tick is not re-armed.
-2. With no broadcast addresses and no interface scan running, start an interface scan. It completes later, so the first tick usually sends only to `255.255.255.255`.
-3. For each enabled id, send one Request to each broadcast address, then one to `255.255.255.255`. Every Request goes to the discovery port, never to the endpoint's ephemeral port.
-4. Re-arm.
-
-## Broadcast addresses
-
-- An interface scan builds the broadcast addresses from every interface address (1.26.60):
-  - Skip loopback, `127.0.0.0/8` and `::1`.
-  - Skip IPv4 link-local, `169.254.0.0/16`.
-  - An IPv4 address adds its directed broadcast, the address with every host bit set. A prefix of 0 or 32 adds the address itself.
-  - Any IPv6 address, link-local included, adds `ff02::1` once, on the dual-stack socket only. On the IPv4 socket an IPv6 address is skipped.
-- A finished scan replaces the set. A scan that finds nothing leaves it empty (1.26.60).
-- No timer refreshes the set. A new scan starts only on a tick that finds the set empty, so an offline host scans every tick (1.26.60).
-- A Request that fails with host unreachable, network unreachable, address family not supported or bad address removes that broadcast address. Other errors keep it, and `255.255.255.255` is never removed (1.26.60).
-
-## Peer table
-
-- A record maps a sender id to an address and a last-active time (1.26.60).
-- A Response or Message with a non-zero sender id adds its sender, or refreshes the record's time and replaces its address with the datagram's source address and port (1.26.60).
-- Never record sender id 0 (1.26.60).
-- A record expires once 60 s pass since its last-active time. Expiry is checked on every lookup and update, with no timer (1.26.60).
-- A peer is on the LAN while its record lives, manual hosts included (1.26.60).
-
-### Manual hosts
-
-- Adding a LAN host by id, IP text and port stores a record that never expires. On an existing record it replaces the address and makes the record permanent. It sends no probe (1.26.60).
-- A later Response or Message from that id refreshes it like any peer, so it then expires 60 s after its last datagram (1.26.60).
-- Removing a LAN host does not erase it. It resets the record's time to now, so the peer stays on the LAN and reachable for 60 s more. Removing an id with no record does nothing (1.26.60).
-
-## First-discovery probe
-
-- When a Response or Message adds a new record, send that peer a Message with sender id 0, recipient id set to the peer, empty message data and packet length 32, to its recorded address (1.26.60).
-- A refresh sends no probe, even when the address changed (1.26.60).
-- A zero sender id is never recorded, so no probe echoes back. Signaling drops data with no space, the empty probe data included (`signaling.md`) (1.26.60).
-- Sending the probe is optional. Receiving one has no side effect.
 
 ## Send
 
-- A signaling message goes out as a Message with sender id set to the local id and recipient id to the target, unicast to the target's recorded address. It is never broadcast (1.26.60).
-- A target with no live record gets nothing: no datagram and no log. The LAN send result is an unknown-peer error that no session reports (`session.md`) (1.26.60).
-
-## Suspend and resume
-
-- While LAN is suspended the endpoint sends, receives and ticks nothing. Its socket stays open (1.26.60).
-- On resume it drops the socket and builds a new one as in Socket, then runs any overdue tick at once (1.26.60).
+- A target with no live record gets nothing: no datagram and no log. The LAN send result is an unknown-peer error that no session reports (SPEC §6.2) (1.26.60).

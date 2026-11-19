@@ -77,7 +77,7 @@ A session closes with one `SessionError`. `CONNECTERROR` carries it (`signaling.
 
 ## SendType
 
-- `SendType.UNRELIABLE = 0`, `SendType.RELIABLE = 1` (1.26.60). `transport.md` maps each to its data channel.
+- `SendType.UNRELIABLE = 0`, `SendType.RELIABLE = 1` (1.26.60). SPEC §10.3 maps each to its data channel.
 
 ## ConnectionFlags
 
