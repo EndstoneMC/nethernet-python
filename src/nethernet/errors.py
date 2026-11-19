@@ -95,7 +95,11 @@ def _describe(error: SessionError | None) -> str:
 class ConnectionFailed(NetherNetError):  # noqa: N818 - websockets-style name
     """``connect()`` never reached the connected state.
 
-    ``error`` is ``None`` when the session closed without an error.
+    Args:
+        error: The session error code, None when the session closed without an error.
+
+    Attributes:
+        error: The session error, None when the session closed without an error.
     """
 
     def __init__(self, error: SessionError | int | None) -> None:
@@ -105,7 +109,14 @@ class ConnectionFailed(NetherNetError):  # noqa: N818 - websockets-style name
 
 
 class ConnectionClosed(NetherNetError):  # noqa: N818 - websockets-style name
-    """The connection is closed. ``error`` is ``None`` for a clean close."""
+    """The connection is closed.
+
+    Args:
+        error: The session error code, None for a clean close.
+
+    Attributes:
+        error: The session error, None for a clean close.
+    """
 
     def __init__(self, error: SessionError | int | None = None) -> None:
         error = None if error is None else decode_error(int(error))

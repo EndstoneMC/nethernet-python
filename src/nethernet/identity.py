@@ -464,7 +464,12 @@ def insert_identity(sdp: str, envelope: str) -> str:
 
 
 class IdentitySigner:
-    """An operator identity signer for SDP answers, holding a P-384 key."""
+    """An operator identity signer for SDP answers, holding a P-384 key.
+
+    Args:
+        private_key: The operator's P-384 key.
+        clock: The source of the signing time in Unix seconds.
+    """
 
     def __init__(
         self,

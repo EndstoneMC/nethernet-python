@@ -25,7 +25,13 @@ class NetworkIDType(Enum):
 
 @dataclass(frozen=True)
 class NetworkID:
-    """A peer identity: a P2P ``u64``, a Realms UUID, or unset."""
+    """A peer identity: a P2P ``u64``, a Realms UUID, or unset.
+
+    Attributes:
+        type: The form of the id.
+        value: The ``u64`` of a P2P id, 0 otherwise.
+        uuid: The UUID of a Realms id, None otherwise.
+    """
 
     type: NetworkIDType
     value: int = 0
@@ -33,20 +39,32 @@ class NetworkID:
 
     @classmethod
     def p2p(cls, value: int) -> NetworkID:
+        """Create a P2P id.
+
+        Args:
+            value: The ``u64`` id.
+        """
         if not 0 <= value <= U64_MAX:
             raise ValueError(f"P2P NetworkID must be a u64, got {value}")
         return cls(NetworkIDType.P2P, value=value)
 
     @classmethod
     def realms(cls, u: _uuid.UUID) -> NetworkID:
+        """Create a Realms id from a UUID."""
         return cls(NetworkIDType.REALMS, uuid=u)
 
     @classmethod
     def unset(cls) -> NetworkID:
+        """Create an unset id."""
         return cls(NetworkIDType.UNSET)
 
     @classmethod
     def parse(cls, text: str) -> NetworkID:
+        """Parse a decimal ``u64`` or a UUID, unset when the text is neither.
+
+        Args:
+            text: The id as text.
+        """
         if not text:
             return cls.unset()
         if all(c in _DIGITS for c in text):
@@ -60,6 +78,11 @@ class NetworkID:
 
     @classmethod
     def from_json(cls, value: object) -> NetworkID:
+        """Read an id from a decoded JSON number or string, unset for any other value.
+
+        Args:
+            value: The decoded JSON value.
+        """
         if isinstance(value, int) and _I64_MIN <= value <= U64_MAX:
             return cls.p2p(value & U64_MAX)
         if isinstance(value, int | float):
@@ -69,6 +92,7 @@ class NetworkID:
         return cls.unset()
 
     def to_json(self) -> int | str | None:
+        """Return the id as a JSON number, string or None when unset."""
         if self.type is NetworkIDType.P2P:
             return self.value
         if self.type is NetworkIDType.REALMS:
@@ -77,6 +101,7 @@ class NetworkID:
 
     @property
     def is_valid(self) -> bool:
+        """Whether the id is set and not zero."""
         if self.type is NetworkIDType.P2P:
             return self.value != 0
         if self.type is NetworkIDType.REALMS:
@@ -91,6 +116,7 @@ class NetworkID:
         return ""
 
     def correlation_id(self) -> str:
+        """Return the id's correlation id, empty when the id is not valid."""
         if not self.is_valid:
             return ""
         if self.type is NetworkIDType.REALMS:

@@ -167,6 +167,11 @@ class Connection:
     Use it as an async context manager to close it on exit, and iterate it to receive packets
     until this end closes. A peer's close raises ``ConnectionClosed`` with ``DATA_CHANNEL_CLOSED``.
 
+    Args:
+        session: The session this connection wraps.
+        local_id: This end's network id.
+        owner: The transport closed together with this connection, None when it is shared.
+
     Attributes:
         local_id: This end's network id.
     """
@@ -343,6 +348,14 @@ class Server:
     """A running host that accepts connections over HTTP and LAN signaling.
 
     Use it as an async context manager to close it on exit.
+
+    Args:
+        handler: Awaited once per connection, each in its own task.
+        local_id: The host's network id.
+        fields: The advertised fields.
+        broadcast: Whether the host broadcasts discovery requests itself.
+        visible: Whether the host answers LAN discovery requests and ``GET /v1/join``.
+        **config: The transport configuration.
     """
 
     def __init__(

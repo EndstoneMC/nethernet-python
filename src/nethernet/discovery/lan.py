@@ -31,6 +31,7 @@ from nethernet.discovery.packets import (
 from nethernet.network_id import NetworkID
 
 Address: TypeAlias = tuple[str, int]
+"""A peer's host and UDP port."""
 
 LIMITED_BROADCAST = "255.255.255.255"
 ALL_NODES = "ff02::1"
