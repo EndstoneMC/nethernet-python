@@ -270,8 +270,10 @@ class PeerConnection:
             self._on_ice_state_change(state)
         if state == "completed":
             self._handle_ice_connected()
-        elif state == "failed" and self._on_ice_failed is not None:
-            self._on_ice_failed()
+        elif state == "failed":
+            self._report_close(SessionError.ICE)
+            if self._on_ice_failed is not None:
+                self._on_ice_failed()
 
     def _handle_ice_connected(self) -> None:
         if self._ice_connected:

@@ -564,3 +564,26 @@ async def test_peer_abort_during_the_reset_wait_keeps_none():
     pc._handle_channel_close(pc._reliable)
     await pc._close_task
     assert closes == [None]
+
+
+async def test_ice_failed_reports_ice_once():
+    closes: list[SessionError] = []
+    pc = PeerConnection(is_dialer=True, on_close=closes.append)
+    try:
+        pc._handle_ice_state("failed")
+        pc._handle_ice_state("failed")
+        assert closes == [SessionError.ICE]
+    finally:
+        await pc.close()
+
+
+async def test_ice_failed_after_another_reason_reports_nothing_more():
+    closes: list[SessionError] = []
+    pc = PeerConnection(is_dialer=True, on_close=closes.append)
+    try:
+        open_channel(pc).emit("message", b"\x00")
+        pc._handle_ice_state("failed")
+        assert closes == [None]
+        await pc._close_task
+    finally:
+        await pc.close()
